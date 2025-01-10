@@ -8,13 +8,20 @@
 #include <metal_stdlib>
 using namespace metal;
 
+
+struct TransformUniforms {
+    float4x4 transform;
+};
+
 struct VertexOut {
     float4 position [[position]];
     float2 uv; // Fragment coordinates
 };
 
-vertex VertexOut vs_triangle_gradient(uint vertexID [[vertex_id]])
-{
+vertex VertexOut vs_triangle_gradient(
+    uint vertexID [[vertex_id]],
+    constant TransformUniforms &uniforms [[buffer(1)]]
+) {
     VertexOut out;
 
     float2 positions[3] = {
@@ -30,7 +37,10 @@ vertex VertexOut vs_triangle_gradient(uint vertexID [[vertex_id]])
     };
 
     //  Place top vertex
-    out.position = float4(positions[vertexID], 0.0, 1.0);
+    float4 pos = float4(positions[vertexID], 0.0, 1.0);
+
+    // Apply the transformation (zoom + pan)
+    out.position = uniforms.transform * pos;
 
     // We store the UV coordinate for the fragment
     out.uv = uvs[vertexID];

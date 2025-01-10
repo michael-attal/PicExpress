@@ -11,14 +11,17 @@ import SwiftUI
 struct EditingContentView: View {
     /// The document being edited
     @Bindable var document: PicExpressDocument
-    
+
     @State private var isEditingDocumentName = false
-    
+
+    @State private var zoom: CGFloat = 1.0
+    @State private var panOffset: CGSize = .zero
+
     var body: some View {
         VStack(spacing: 0) {
-            // --- Metal canvas zone --
+            // --- Metal canvas zone ---
             // RotationMetalCanvasTestView(contentMode: .fit)
-            MetalCanvasView()
+            MetalCanvasView(zoom: $zoom, panOffset: $panOffset)
         }
         .navigationTitle(document.name)
         .toolbar {
@@ -29,21 +32,21 @@ struct EditingContentView: View {
                             Text("Édition du document : \(document.name)")
                                 .font(.title3)
                             if !isEditingDocumentName {
-                                Text("Date : \(document.timestamp, style: .date) - \(document.timestamp, style: .time)")
+                                Text("Date : \(Utils.localizedDateString(from: document.timestamp)) - \(Utils.localizedTimeString(from: document.timestamp))")
                                     .foregroundColor(.secondary)
                             }
                         }
-                            
+
                         Spacer()
-                            
+
                         Button {
                             isEditingDocumentName.toggle()
                         } label: {
-                            Text(isEditingDocumentName ? "Done" : "Edit")
+                            Text(isEditingDocumentName ? "Valider" : "Editer")
                         }
                         .padding(.leading, 8)
                     }
-                        
+
                     if isEditingDocumentName {
                         TextField("Nom du document", text: $document.name)
                             .padding(0)
