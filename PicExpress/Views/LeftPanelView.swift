@@ -47,6 +47,11 @@ struct LeftPanelView: View {
                     }
                 }
             }
+            .onChange(of: selectedDocument) {
+                if let doc = selectedDocument {
+                    print("New document selected: \(doc.name)")
+                }
+            }
             
             Button {
                 onAddDocument()

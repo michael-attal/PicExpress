@@ -88,9 +88,13 @@ struct EditingContentView: View {
                 }
             }
         }
+        .onChange(of: document) {
+            clearPreviousPolygon()
+            loadPolygonsFromDocument()
+        }
         .task {
-            // Load and display the list of polygons in the document
-            loadPolygonFromDocument()
+            // Load and display the list of polygons in the document first time the view appear and then onChange above
+            loadPolygonsFromDocument()
         }
     }
 
@@ -111,7 +115,7 @@ struct EditingContentView: View {
 
     /// Reads doc.verticesData (via loadAllPolygons()) then
     /// adds each polygon to the mainRenderer.
-    private func loadPolygonFromDocument() {
+    private func loadPolygonsFromDocument() {
         guard let mainRenderer = appState.mainRenderer else {
             print("No mainRenderer found in appState.")
             return
@@ -127,5 +131,14 @@ struct EditingContentView: View {
             // Add it to renderer
             mainRenderer.addPolygon(points: ectPoints, color: c)
         }
+    }
+    
+    private func clearPreviousPolygon() {
+        guard let mainRenderer = appState.mainRenderer else {
+            print("No mainRenderer found in appState.")
+            return
+        }
+
+        mainRenderer.clearPolygons()
     }
 }

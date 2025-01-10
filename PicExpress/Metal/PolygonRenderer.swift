@@ -104,6 +104,10 @@ final class PolygonRenderer {
         polygons.append(polyData)
     }
     
+    func clearPolygons() {
+        polygons.removeAll()
+    }
+    
     /// Draws all polygons
     func draw(encoder: MTLRenderCommandEncoder,
               uniformBuffer: MTLBuffer?)

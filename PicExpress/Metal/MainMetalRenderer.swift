@@ -75,6 +75,11 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         polygonRenderer.addPolygon(points: points, color: color)
     }
     
+    /// Clear existing polygons from the renderer
+    func clearPolygons() {
+        polygonRenderer.clearPolygons()
+    }
+    
     func showTriangle(_ shouldDisplayTriangle: Bool) {
         showTriangle = shouldDisplayTriangle
     }
