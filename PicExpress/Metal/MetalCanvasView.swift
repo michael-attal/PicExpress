@@ -11,9 +11,15 @@ import SwiftUI
 struct MetalCanvasView: NSViewRepresentable {
     @Binding var zoom: CGFloat
     @Binding var panOffset: CGSize
-
+    
+    // To (de)activate the gradient triangle display
+    @Binding var showTriangle: Bool
+    
+    // For storing mainRenderer in appState
+    @Environment(AppState.self) private var appState
+    
     func makeCoordinator() -> Coordinator {
-        Coordinator(zoom: $zoom, panOffset: $panOffset)
+        Coordinator(zoom: $zoom, panOffset: $panOffset, showTriangle: $showTriangle)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -24,93 +30,95 @@ struct MetalCanvasView: NSViewRepresentable {
 
         // 2. Instantiates the Metal view
         let mtkView = ZoomableMTKView(frame: .zero, device: device)
-
-        // Link the coordinator
-        mtkView.coordinator = context.coordinator
-
-        // 3. Background color (black)
+        
+        // 3. Create the main renderer and assign it to coordinator
+        let mr = MainMetalRenderer(mtkView: mtkView, showTriangle: showTriangle)
+        mtkView.delegate = mr
+        
+        context.coordinator.mainRenderer = mr
+        mtkView.coordinator = context.coordinator // Indispensable for scrollWheel
+        
+        // Stock into appState needs to go to the main actor for that.
+        DispatchQueue.main.async {
+            self.appState.mainRenderer = mr
+        }
+        
+        // 4. Background color (black)
         mtkView.clearColor = MTLClearColorMake(0, 0, 0, 1)
-
-        // 4. Create the renderer and assign it as a delegate
-        let renderer = MetalRenderer(mtkView: mtkView)
-        mtkView.delegate = renderer
-
-        // 5. Store the renderer in the Coordinator
-        context.coordinator.renderer = renderer
-
-        // Add gesture recognizers
+        mtkView.enableSetNeedsDisplay = true
+        mtkView.isPaused = false
+        
+        // Gestures
         let pinchRecognizer = NSMagnificationGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleMagnification(_:))
         )
         mtkView.addGestureRecognizer(pinchRecognizer)
-
+        
         let panRecognizer = NSPanGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handlePan(_:))
         )
         mtkView.addGestureRecognizer(panRecognizer)
-
-        mtkView.enableSetNeedsDisplay = true
-        mtkView.isPaused = false
-
+        
         return mtkView
     }
-
+    
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // Handle update later here if needed
+        // On each update, we update the zoom/pan and if we display the triangle renderer
+        context.coordinator.mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
+        
+        context.coordinator.mainRenderer?.showTriangle(showTriangle)
     }
-
+    
     // MARK: - Coordinator
-
+    
     class Coordinator: NSObject {
         @Binding var zoom: CGFloat
         @Binding var panOffset: CGSize
-
-        var renderer: MetalRenderer?
-
-        init(zoom: Binding<CGFloat>, panOffset: Binding<CGSize>) {
+        @Binding var showTriangle: Bool
+        
+        var mainRenderer: MainMetalRenderer?
+        
+        init(zoom: Binding<CGFloat>, panOffset: Binding<CGSize>, showTriangle: Binding<Bool>) {
             self._zoom = zoom
             self._panOffset = panOffset
+            self._showTriangle = showTriangle
         }
-
-        // Pinch
+        
         @objc func handleMagnification(_ sender: NSMagnificationGestureRecognizer) {
             if sender.state == .changed {
                 let zoomFactor = 1 + sender.magnification
                 sender.magnification = 0
                 zoom *= zoomFactor
-                renderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
+                mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
             }
         }
-
-        // Pan
+        
         @objc func handlePan(_ sender: NSPanGestureRecognizer) {
             let translation = sender.translation(in: sender.view)
             let viewSize = sender.view?.bounds.size ?? .zero
-
+            
             panOffset.width += translation.x / viewSize.width
             panOffset.height -= translation.y / viewSize.height
             sender.setTranslation(.zero, in: sender.view)
-
-            renderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
+            
+            mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         }
-
-        // ScrollWheel
+        
         func handleScrollWheel(_ event: NSEvent) {
             let scrollSensitivity: CGFloat = 0.01
             let zoomFactor = 1 + event.deltaY * scrollSensitivity
-
             zoom *= zoomFactor
-            renderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
+            mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         }
     }
-
-    // MARK: - Custom Zoomable MTKView
-
+    
+    // MARK: - ZoomableMTKView
+    
     class ZoomableMTKView: MTKView {
         weak var coordinator: Coordinator?
-
+        
         override func scrollWheel(with event: NSEvent) {
             coordinator?.handleScrollWheel(event)
         }

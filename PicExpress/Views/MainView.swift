@@ -5,16 +5,15 @@
 //  Created by Michaël ATTAL on 10/01/2025.
 //
 
+import AppKit
 import SwiftData
 import SwiftUI
 
 struct MainView: View {
     @Environment(\.modelContext) private var modelContext
-    
-    /// Retrieve all stored documents from SwiftData
+    @Environment(AppState.self) private var appState
+
     @Query private var documents: [PicExpressDocument]
-    
-    /// Document currently selected (from list)
     @State private var selectedDocument: PicExpressDocument?
 
     /// Basic startup tools (edit later from required tools of syllabus)
@@ -24,8 +23,9 @@ struct MainView: View {
         Tool(name: "Texte", systemImage: "textformat"),
         Tool(name: "Formes", systemImage: "square.on.circle"),
         Tool(name: "Recadrage", systemImage: "crop"),
+        Tool(name: "Polygone", systemImage: "scribble.variable")
     ]
-    
+
     var body: some View {
         NavigationSplitView {
             LeftPanelView(
@@ -33,11 +33,14 @@ struct MainView: View {
                 selectedDocument: $selectedDocument,
                 onAddDocument: addDocument,
                 onDeleteDocument: deleteDocument,
-                tools: tools
+                tools: tools,
+                onPolygonPoints: { points, color in
+                    storePolygon(points: points, color: color)
+                }
             )
             .navigationTitle("PicExpress")
             .navigationSplitViewColumnWidth(min: 10, ideal: 120, max: 200)
-            
+
         } detail: {
             if let doc = selectedDocument {
                 EditingContentView(document: doc)
@@ -48,9 +51,9 @@ struct MainView: View {
             }
         }
     }
-    
+
     // MARK: - Actions
-    
+
     private func addDocument() {
         withAnimation {
             let newDoc = PicExpressDocument(name: "Nouveau Document")
@@ -58,77 +61,45 @@ struct MainView: View {
             selectedDocument = newDoc
         }
     }
-    
+
     private func deleteDocument(_ doc: PicExpressDocument) {
         if doc == selectedDocument {
             selectedDocument = nil
         }
-        
+
         withAnimation {
             modelContext.delete(doc)
         }
     }
-}
 
-struct LeftPanelView: View {
-    /// List of documents retrieved via SwiftData
-    let documents: [PicExpressDocument]
-    
-    @Binding var selectedDocument: PicExpressDocument?
-    
-    let onAddDocument: () -> Void
-    
-    let onDeleteDocument: (PicExpressDocument) -> Void
-    
-    /// List of tools to display
-    let tools: [Tool]
-    
-    var body: some View {
-        VStack(alignment: .leading) {
-            // SECTION 1 : list of docs
-            List(selection: $selectedDocument) {
-                Section("Mes documents") {
-                    ForEach(documents) { doc in
-                        HStack {
-                            Text(doc.name)
-                            Spacer()
-                            
-                            Button {
-                                withAnimation {
-                                    onDeleteDocument(doc)
-                                }
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundColor(.red)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.trailing, 8)
-                        }
-                        .tag(doc) // Tells SwiftUI that this line represents the doc
-                    }
-                }
-            }
-            
-            Button {
-                onAddDocument()
-            } label: {
-                Label("Nouveau document", systemImage: "plus")
-            }
-            .padding(.horizontal)
-            .buttonStyle(.borderedProminent)
-            
-            Divider()
-            
-            // SECTION 2 : Tools panel
-            ToolsPanelView(tools: tools)
-                .padding(.top, 8)
-            
-            Spacer()
+    /// Stores a polygon (points + color) in doc (JSON) and displays it immediately.
+    private func storePolygon(points: [ECTPoint], color: Color) {
+        guard let doc = selectedDocument else { return }
+
+        // Convert SwiftUI.Color -> RGBA (deviceRGB)
+        let uiColor = NSColor(color)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        if let converted = uiColor.usingColorSpace(.deviceRGB) {
+            converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        } else {
+            print("Impossible de convertir la couleur (catalog color?).")
         }
-    }
-}
 
-#Preview {
-    MainView()
-        .modelContainer(for: PicExpressDocument.self, inMemory: true)
+        // 1) Load existing list
+        var existingPolygons = doc.loadAllPolygons()
+
+        // 2) Building a new StoredPolygon
+        let points2D = points.map { Point2D(x: $0.x, y: $0.y) }
+        let colorArray = [Float(red), Float(green), Float(blue), Float(alpha)]
+        let newPoly = StoredPolygon(points: points2D, color: colorArray)
+
+        // 3) Add + save
+        existingPolygons.append(newPoly)
+        doc.saveAllPolygons(existingPolygons)
+        print("Now doc has \(existingPolygons.count) polygons stored.")
+
+        // 4) Immediate display in mainRenderer
+        let colorVec = SIMD4<Float>(colorArray[0], colorArray[1], colorArray[2], colorArray[3])
+        appState.mainRenderer?.addPolygon(points: points, color: colorVec)
+    }
 }
