@@ -12,6 +12,7 @@ extension Double {
     var degreesToRadians: Double { return self * .pi / 180 }
 }
 
+/// Helper extension to create float4x4 easily
 extension float4x4 {
     init(rotationX angle: Float) {
         self = float4x4(
@@ -38,5 +39,13 @@ extension float4x4 {
             [0, 0, 1, 0],
             [0, 0, 0, 1]
         )
+    }
+
+    init(_ c0: simd_float4,
+         _ c1: simd_float4,
+         _ c2: simd_float4,
+         _ c3: simd_float4)
+    {
+        self.init(columns: (c0, c1, c2, c3))
     }
 }
