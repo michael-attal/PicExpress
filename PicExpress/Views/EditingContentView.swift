@@ -8,6 +8,14 @@
 import SwiftData
 import SwiftUI
 
+enum RendererOptions: String, CaseIterable, Identifiable {
+    case polygon = "Polygone"
+    case triangle = "Triangle"
+    case circle = "Cercle"
+
+    var id: String { rawValue }
+}
+
 struct EditingContentView: View {
     @Environment(AppState.self) private var appState
 
@@ -20,8 +28,10 @@ struct EditingContentView: View {
     @State private var zoom: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
 
-    // Display triangle or not (for testing multiple rendering in metal)
-    @State private var showTriangle = true
+    // Display triangle or not (for testing multiple renderer in metal)
+    @State private var showTriangle = false
+
+    @State private var selectedRenderers: Set<RendererOptions> = [.polygon]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,7 +40,7 @@ struct EditingContentView: View {
             MetalCanvasView(
                 zoom: $zoom,
                 panOffset: $panOffset,
-                showTriangle: showTriangle
+                showTriangle: $showTriangle
             )
         }
         .navigationTitle(document.name)
@@ -56,10 +66,18 @@ struct EditingContentView: View {
                         }
                         .padding(.leading, 8)
 
-                        // A toggle to show/hide the triangle renderer test
-                        Toggle("Triangle ?", isOn: $showTriangle)
-                            .toggleStyle(.switch)
-                            .padding(.horizontal)
+                        // A Menu picker to show/hide some renderer (like the triangle renderer test)
+                        Menu {
+                            ForEach(RendererOptions.allCases) { option in
+                                Button {
+                                    toggleRendererOption(option)
+                                } label: {
+                                    Label("\(option.rawValue) \(selectedRenderers.contains(option) ? "☑︎" : "□")", systemImage: selectedRenderers.contains(option) ? "checkmark" : "")
+                                }
+                            }
+                        } label: {
+                            Text("Renderer(s)")
+                        }.frame(width: 100)
                     }
 
                     if isEditingDocumentName {
@@ -68,13 +86,27 @@ struct EditingContentView: View {
                             .textFieldStyle(.roundedBorder)
                     }
                 }
-                .padding()
             }
         }
         .task {
             // Load and display the list of polygons in the document
             loadPolygonFromDocument()
         }
+    }
+
+    private func toggleRendererOption(_ option: RendererOptions) {
+        if selectedRenderers.contains(option) {
+            selectedRenderers.remove(option)
+        } else {
+            selectedRenderers.insert(option)
+        }
+        updateRenderers()
+    }
+
+    /// Update canvas metal according to selected renderer
+    private func updateRenderers() {
+        showTriangle = selectedRenderers.contains(.triangle)
+        // TODO: showPolygon (add inside metal canvas view the boolean... like for showing the triangle renderer)
     }
 
     /// Reads doc.verticesData (via loadAllPolygons()) then

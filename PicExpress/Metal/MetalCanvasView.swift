@@ -13,13 +13,13 @@ struct MetalCanvasView: NSViewRepresentable {
     @Binding var panOffset: CGSize
     
     // To (de)activate the gradient triangle display
-    let showTriangle: Bool
+    @Binding var showTriangle: Bool
     
     // For storing mainRenderer in appState
     @Environment(AppState.self) private var appState
     
     func makeCoordinator() -> Coordinator {
-        Coordinator(zoom: $zoom, panOffset: $panOffset)
+        Coordinator(zoom: $zoom, panOffset: $panOffset, showTriangle: $showTriangle)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -65,8 +65,10 @@ struct MetalCanvasView: NSViewRepresentable {
     }
     
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // On each update, we update the zoom/pan
+        // On each update, we update the zoom/pan and if we display the triangle renderer
         context.coordinator.mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
+        
+        context.coordinator.mainRenderer?.showTriangle(showTriangle)
     }
     
     // MARK: - Coordinator
@@ -74,12 +76,14 @@ struct MetalCanvasView: NSViewRepresentable {
     class Coordinator: NSObject {
         @Binding var zoom: CGFloat
         @Binding var panOffset: CGSize
+        @Binding var showTriangle: Bool
         
         var mainRenderer: MainMetalRenderer?
         
-        init(zoom: Binding<CGFloat>, panOffset: Binding<CGSize>) {
+        init(zoom: Binding<CGFloat>, panOffset: Binding<CGSize>, showTriangle: Binding<Bool>) {
             self._zoom = zoom
             self._panOffset = panOffset
+            self._showTriangle = showTriangle
         }
         
         @objc func handleMagnification(_ sender: NSMagnificationGestureRecognizer) {

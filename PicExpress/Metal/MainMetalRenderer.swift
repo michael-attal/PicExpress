@@ -30,8 +30,8 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     private var zoom: Float = 1.0
     private var pan: SIMD2<Float> = .zero
     
-    // For testing: Do we show triangle renderer or not
-    private let showTriangle: Bool
+    // For testing: Do we show the triangle from Triangle Renderer or not
+    private var showTriangle: Bool
     
     // MARK: - Init
 
@@ -73,6 +73,10 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     /// Adds a triangulated polygon (via EarClipping) to the PolygonRenderer
     func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
         polygonRenderer.addPolygon(points: points, color: color)
+    }
+    
+    func showTriangle(_ shouldDisplayTriangle: Bool) {
+        showTriangle = shouldDisplayTriangle
     }
     
     func setZoomAndPan(zoom: CGFloat, panOffset: CGSize) {
