@@ -58,7 +58,8 @@ fragment float4 fs_triangle_gradient(VertexOut in [[stage_in]])
     float4 colorTop    = float4(0.0, 0.0, 1.0, 1.0); // Blue
 
     // Interpolation: the higher we are (uv.y close to 1), the bluer it is
-    float4 color = mix(colorBottom, colorTop, in.uv.y);
+    float t = clamp(in.uv.y, 0.0, 1.0);
+    float4 color = mix(colorBottom, colorTop, t);
     
     return color;
 }

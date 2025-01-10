@@ -12,4 +12,7 @@ import SwiftUI
 @MainActor final class AppState: Sendable {
     static let isDevelopmentMode = false
     static let isDebugMode = false
+
+    // Used to add a polygon directly from a view.
+    var mainRenderer: MainMetalRenderer?
 }

@@ -9,19 +9,29 @@ import SwiftData
 import SwiftUI
 
 struct EditingContentView: View {
+    @Environment(AppState.self) private var appState
+
     /// The document being edited
     @Bindable var document: PicExpressDocument
 
     @State private var isEditingDocumentName = false
 
+    // Zoom and pan for MetalCanvasView
     @State private var zoom: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
+
+    // Display triangle or not (for testing multiple rendering in metal)
+    @State private var showTriangle = true
 
     var body: some View {
         VStack(spacing: 0) {
             // --- Metal canvas zone ---
             // RotationMetalCanvasTestView(contentMode: .fit)
-            MetalCanvasView(zoom: $zoom, panOffset: $panOffset)
+            MetalCanvasView(
+                zoom: $zoom,
+                panOffset: $panOffset,
+                showTriangle: showTriangle
+            )
         }
         .navigationTitle(document.name)
         .toolbar {
@@ -31,12 +41,12 @@ struct EditingContentView: View {
                         VStack(alignment: .leading) {
                             Text("Édition du document : \(document.name)")
                                 .font(.title3)
+
                             if !isEditingDocumentName {
                                 Text("Date : \(Utils.localizedDateString(from: document.timestamp)) - \(Utils.localizedTimeString(from: document.timestamp))")
                                     .foregroundColor(.secondary)
                             }
                         }
-
                         Spacer()
 
                         Button {
@@ -45,6 +55,11 @@ struct EditingContentView: View {
                             Text(isEditingDocumentName ? "Valider" : "Editer")
                         }
                         .padding(.leading, 8)
+
+                        // A toggle to show/hide the triangle renderer test
+                        Toggle("Triangle ?", isOn: $showTriangle)
+                            .toggleStyle(.switch)
+                            .padding(.horizontal)
                     }
 
                     if isEditingDocumentName {
@@ -55,6 +70,30 @@ struct EditingContentView: View {
                 }
                 .padding()
             }
+        }
+        .task {
+            // Load and display the list of polygons in the document
+            loadPolygonFromDocument()
+        }
+    }
+
+    /// Reads doc.verticesData (via loadAllPolygons()) then
+    /// adds each polygon to the mainRenderer.
+    private func loadPolygonFromDocument() {
+        guard let mainRenderer = appState.mainRenderer else {
+            print("No mainRenderer found in appState.")
+            return
+        }
+
+        // Load existing polygon list
+        let storedPolygons = document.loadAllPolygons()
+        for sp in storedPolygons {
+            // Convert [Point2D] -> [ECTPoint]
+            let ectPoints = sp.points.map { ECTPoint(x: $0.x, y: $0.y) }
+            // Convert [Float] -> SIMD4<Float>
+            let c = SIMD4<Float>(sp.color[0], sp.color[1], sp.color[2], sp.color[3])
+            // Add it to renderer
+            mainRenderer.addPolygon(points: ectPoints, color: c)
         }
     }
 }
