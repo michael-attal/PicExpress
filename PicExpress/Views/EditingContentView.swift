@@ -48,21 +48,25 @@ struct EditingContentView: View {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
                     HStack {
-                        VStack(alignment: .leading) {
-                            Text("Édition du document : \(document.name)")
-                                .font(.title3)
-
-                            if !isEditingDocumentName {
+                        if isEditingDocumentName {
+                            TextField("Nom du document", text: $document.name)
+                                .padding(0)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            VStack(alignment: .leading) {
+                                Text("Édition du document : \(document.name)")
+                                    .font(.title3)
                                 Text("Date : \(Utils.localizedDateString(from: document.timestamp)) - \(Utils.localizedTimeString(from: document.timestamp))")
                                     .foregroundColor(.secondary)
                             }
                         }
+
                         Spacer()
 
                         Button {
                             isEditingDocumentName.toggle()
                         } label: {
-                            Text(isEditingDocumentName ? "Valider" : "Editer")
+                            Text(isEditingDocumentName ? "Valider" : "Renommer").frame(minWidth: 72)
                         }
                         .padding(.leading, 8)
 
@@ -78,12 +82,6 @@ struct EditingContentView: View {
                         } label: {
                             Text("Renderer(s)")
                         }.frame(width: 100)
-                    }
-
-                    if isEditingDocumentName {
-                        TextField("Nom du document", text: $document.name)
-                            .padding(0)
-                            .textFieldStyle(.roundedBorder)
                     }
                 }
             }
@@ -132,7 +130,7 @@ struct EditingContentView: View {
             mainRenderer.addPolygon(points: ectPoints, color: c)
         }
     }
-    
+
     private func clearPreviousPolygon() {
         guard let mainRenderer = appState.mainRenderer else {
             print("No mainRenderer found in appState.")

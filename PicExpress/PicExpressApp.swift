@@ -30,5 +30,7 @@ struct PicExpressApp: App {
                 .modelContainer(sharedModelContainer)
                 .environment(appState)
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowBackgroundDragBehavior(.enabled)
     }
 }
