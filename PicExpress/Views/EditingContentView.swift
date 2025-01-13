@@ -52,6 +52,7 @@ struct EditingContentView: View {
                             TextField("Nom du document", text: $document.name)
                                 .padding(0)
                                 .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 240)
                         } else {
                             VStack(alignment: .leading) {
                                 Text("Édition du document : \(document.name)")
@@ -60,8 +61,6 @@ struct EditingContentView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-
-                        Spacer()
 
                         Button {
                             isEditingDocumentName.toggle()
