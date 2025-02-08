@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct LeftPanelView: View {
+    @Environment(AppState.self) private var appState
+
     /// List of documents retrieved via SwiftData
     let documents: [PicExpressDocument]
     
@@ -34,6 +36,10 @@ struct LeftPanelView: View {
                             
                             Button {
                                 withAnimation {
+                                    if appState.selectedDocument == doc {
+                                        appState.isDocumentOpen = false
+                                        appState.selectedDocument = nil
+                                    }
                                     onDeleteDocument(doc)
                                 }
                             } label: {
@@ -49,6 +55,8 @@ struct LeftPanelView: View {
             }
             .onChange(of: selectedDocument) {
                 if let doc = selectedDocument {
+                    appState.selectedDocument = doc
+                    appState.isDocumentOpen = true
                     print("New document selected: \(doc.name)")
                 }
             }
@@ -61,11 +69,12 @@ struct LeftPanelView: View {
             .padding(.horizontal)
             .buttonStyle(.borderedProminent)
             
-            Divider()
-            
-            // SECTION 2 : Tools panel
-            ToolsPanelView(tools: tools, onPolygonPoints: onPolygonPoints)
-                .padding(.top, 8)
+            // SECTION 2 : Tools panel - Only if a document is selected
+            if appState.isDocumentOpen {
+                Divider()
+                ToolsPanelView(tools: tools, onPolygonPoints: onPolygonPoints)
+                    .padding(.top, 8)
+            }
             
             Spacer()
         }

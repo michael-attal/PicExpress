@@ -13,6 +13,12 @@ import SwiftUI
     static let isDevelopmentMode = false
     static let isDebugMode = false
 
-    // Used to add a polygon directly from a view.
     var mainRenderer: MainMetalRenderer?
+
+    var isClickPolygonMode: Bool = false
+
+    var selectedColor: Color = .yellow
+    
+    var isDocumentOpen: Bool = false
+    var selectedDocument: PicExpressDocument?
 }

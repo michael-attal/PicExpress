@@ -35,6 +35,13 @@ struct EditingContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // If we are in "click polygon" mode, show a small instruction text
+            if appState.isClickPolygonMode {
+                Text("Cliquez sur au moins deux points pour créer une forme. Appuyez sur Entrée pour valider.")
+                    .padding(8)
+                    .foregroundColor(.yellow)
+            }
+
             // --- Metal canvas zone ---
             // RotationMetalCanvasTestView(contentMode: .fit)
             MetalCanvasView(
@@ -42,6 +49,7 @@ struct EditingContentView: View {
                 panOffset: $panOffset,
                 showTriangle: $showTriangle
             )
+            // .aspectRatio(1, contentMode: .fit)
         }
         .navigationTitle(document.name)
         .toolbar {
@@ -104,38 +112,27 @@ struct EditingContentView: View {
         updateRenderers()
     }
 
-    /// Update canvas metal according to selected renderer
     private func updateRenderers() {
         showTriangle = selectedRenderers.contains(.triangle)
-        // TODO: showPolygon (add inside metal canvas view the boolean... like for showing the triangle renderer)
+        // If needed, show/hide other renderers
     }
 
-    /// Reads doc.verticesData (via loadAllPolygons()) then
-    /// adds each polygon to the mainRenderer.
     private func loadPolygonsFromDocument() {
         guard let mainRenderer = appState.mainRenderer else {
-            print("No mainRenderer found in appState.")
             return
         }
-
-        // Load existing polygon list
         let storedPolygons = document.loadAllPolygons()
         for sp in storedPolygons {
-            // Convert [Point2D] -> [ECTPoint]
             let ectPoints = sp.points.map { ECTPoint(x: $0.x, y: $0.y) }
-            // Convert [Float] -> SIMD4<Float>
             let c = SIMD4<Float>(sp.color[0], sp.color[1], sp.color[2], sp.color[3])
-            // Add it to renderer
             mainRenderer.addPolygon(points: ectPoints, color: c)
         }
     }
 
     private func clearPreviousPolygon() {
         guard let mainRenderer = appState.mainRenderer else {
-            print("No mainRenderer found in appState.")
             return
         }
-
         mainRenderer.clearPolygons()
     }
 }

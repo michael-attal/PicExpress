@@ -18,12 +18,12 @@ struct MainView: View {
 
     /// Basic startup tools (edit later from required tools of syllabus)
     private let tools: [Tool] = [
-        Tool(name: "Pinceau", systemImage: "paintbrush"),
+        Tool(name: "Remplissage", systemImage: "drop.fill"),
         Tool(name: "Gomme", systemImage: "eraser"),
-        Tool(name: "Texte", systemImage: "textformat"),
         Tool(name: "Formes", systemImage: "square.on.circle"),
-        Tool(name: "Recadrage", systemImage: "crop"),
-        Tool(name: "Polygone", systemImage: "scribble.variable")
+        // Tool(name: "Recadrage", systemImage: "crop"),
+        Tool(name: "Polygone", systemImage: "hexagon.fill"),
+        Tool(name: "Polygone par clic", systemImage: "hand.point.up.left")
     ]
 
     var body: some View {

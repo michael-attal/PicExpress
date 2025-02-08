@@ -21,6 +21,8 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     // Sub-renderers, we can add more if needed
     private let triangleRenderer: TriangleRenderer
     private let polygonRenderer: PolygonRenderer
+    let pointsRenderer: PointsRenderer? // Add a pointsRenderer for preview when placing point on "Polygone par clic" mode
+    var previewColor: SIMD4<Float> = .init(1, 1, 0, 1) // color of preview points
     
     // Buffers
     private var uniformBuffer: MTLBuffer?
@@ -46,17 +48,18 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         // Charge metal library
         let library = device.makeDefaultLibrary()
         
-        // Instantiate the two sub-renderers
+        // Instantiate the sub-renderers
         self.triangleRenderer = TriangleRenderer(device: device, library: library)
         self.polygonRenderer = PolygonRenderer(device: device, library: library)
+        self.pointsRenderer = PointsRenderer(device: device, library: library)
         
         super.init()
         
         // Init ressources
-        buildResources(mtkView)
+        buildResources()
     }
     
-    private func buildResources(_ mtkView: MTKView) {
+    private func buildResources() {
         commandQueue = device.makeCommandQueue()
         
         // Create a uniformBuffer to store TransformUniforms
@@ -64,8 +67,6 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             length: MemoryLayout<TransformUniforms>.size,
             options: []
         )
-        
-        // mtkView.colorPixelFormat = .bgra8Unorm
     }
     
     // MARK: - Public
@@ -106,21 +107,27 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             return
         }
         
-        updateUniforms(view.drawableSize)
+        updateUniforms()
         
         let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor)!
         
+        // Optional triangle
         if showTriangle {
             triangleRenderer.draw(
                 encoder: encoder,
-                // colorPixelFormat: view.colorPixelFormat,
                 uniformBuffer: uniformBuffer
             )
         }
         
+        // Polygons
         polygonRenderer.draw(
             encoder: encoder,
-            // colorPixelFormat: view.colorPixelFormat,
+            uniformBuffer: uniformBuffer
+        )
+        
+        // Preview points
+        pointsRenderer?.draw(
+            encoder: encoder,
             uniformBuffer: uniformBuffer
         )
         
@@ -129,9 +136,8 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
     
-    // MARK: - Private
-    
-    private func updateUniforms(_ drawableSize: CGSize) {
+    private func updateUniforms() {
+        // 1) Build the transform matrix from zoom & pan
         let s = zoom
         let scaleMatrix = float4x4(
             simd_float4(s, 0, 0, 0),
@@ -139,9 +145,9 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             simd_float4(0, 0, 1, 0),
             simd_float4(0, 0, 0, 1)
         )
+        
         let tx = pan.x * 2.0
         let ty = -pan.y * 2.0
-        
         let translationMatrix = float4x4(
             simd_float4(1, 0, 0, 0),
             simd_float4(0, 1, 0, 0),
@@ -150,6 +156,8 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         )
         
         uniforms.transform = translationMatrix * scaleMatrix
+
+        uniforms.polygonColor = previewColor
         
         if let ub = uniformBuffer {
             memcpy(ub.contents(), &uniforms, MemoryLayout<TransformUniforms>.size)
