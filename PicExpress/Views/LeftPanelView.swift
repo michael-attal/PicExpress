@@ -72,7 +72,7 @@ struct LeftPanelView: View {
             // SECTION 2 : Tools panel - Only if a document is selected
             if appState.isDocumentOpen {
                 Divider()
-                ToolsPanelView(tools: tools, onPolygonPoints: onPolygonPoints)
+                ToolsPanelView(onPolygonPoints: onPolygonPoints, tools: tools)
                     .padding(.top, 8)
             }
             

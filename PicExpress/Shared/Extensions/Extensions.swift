@@ -5,8 +5,10 @@
 //  Created by Michaël ATTAL on 10/01/2025.
 //
 
+import AppKit
 import Foundation
 import RealityKit
+import SwiftUICore
 
 extension Double {
     var degreesToRadians: Double { return self * .pi / 180 }
@@ -50,17 +52,34 @@ extension float4x4 {
     }
 }
 
-extension Sequence {
-  /// Groups up elements of `self` into a new Dictionary,
-  /// whose values are Arrays of grouped elements,
-  /// each keyed by the group key returned by the given closure.
-  /// - Parameters:
-  ///   - keyForValue: A closure that returns a key for each element in
-  ///     `self`.
-  /// - Returns: A dictionary containing grouped elements of self, keyed by
-  ///     the keys derived by the `keyForValue` closure.
-  @inlinable
-  public func grouped<GroupKey>(by keyForValue: (Element) throws -> GroupKey) rethrows -> [GroupKey: [Element]] {
-    try Dictionary(grouping: self, by: keyForValue)
-  }
+public extension Sequence {
+    /// Groups up elements of `self` into a new Dictionary,
+    /// whose values are Arrays of grouped elements,
+    /// each keyed by the group key returned by the given closure.
+    /// - Parameters:
+    ///   - keyForValue: A closure that returns a key for each element in
+    ///     `self`.
+    /// - Returns: A dictionary containing grouped elements of self, keyed by
+    ///     the keys derived by the `keyForValue` closure.
+    @inlinable
+    func grouped<GroupKey>(by keyForValue: (Element) throws -> GroupKey) rethrows -> [GroupKey: [Element]] {
+        try Dictionary(grouping: self, by: keyForValue)
+    }
+}
+
+extension Color {
+    /// Convert the SwiftUI color to a SIMD4<Float> in RGBA order
+    func toSIMD4() -> SIMD4<Float> {
+        let nsColor = NSColor(self)
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+
+        if let converted = nsColor.usingColorSpace(.deviceRGB) {
+            converted.getRed(&r, green: &g, blue: &b, alpha: &a)
+        }
+
+        return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
+    }
 }

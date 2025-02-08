@@ -35,7 +35,8 @@ struct MainView: View {
                 onDeleteDocument: deleteDocument,
                 tools: tools,
                 onPolygonPoints: { points, color in
-                    storePolygon(points: points, color: color)
+                    // Directly store via appState
+                    appState.storePolygonInDocument(points, color: color)
                 }
             )
             .navigationTitle("PicExpress")
@@ -70,36 +71,5 @@ struct MainView: View {
         withAnimation {
             modelContext.delete(doc)
         }
-    }
-
-    /// Stores a polygon (points + color) in doc (JSON) and displays it immediately.
-    private func storePolygon(points: [ECTPoint], color: Color) {
-        guard let doc = selectedDocument else { return }
-
-        // Convert SwiftUI.Color -> RGBA (deviceRGB)
-        let uiColor = NSColor(color)
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        if let converted = uiColor.usingColorSpace(.deviceRGB) {
-            converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        } else {
-            print("Impossible de convertir la couleur (catalog color?).")
-        }
-
-        // 1) Load existing list
-        var existingPolygons = doc.loadAllPolygons()
-
-        // 2) Building a new StoredPolygon
-        let points2D = points.map { Point2D(x: $0.x, y: $0.y) }
-        let colorArray = [Float(red), Float(green), Float(blue), Float(alpha)]
-        let newPoly = StoredPolygon(points: points2D, color: colorArray)
-
-        // 3) Add + save
-        existingPolygons.append(newPoly)
-        doc.saveAllPolygons(existingPolygons)
-        print("Now doc has \(existingPolygons.count) polygons stored.")
-
-        // 4) Immediate display in mainRenderer
-        let colorVec = SIMD4<Float>(colorArray[0], colorArray[1], colorArray[2], colorArray[3])
-        appState.mainRenderer?.addPolygon(points: points, color: colorVec)
     }
 }

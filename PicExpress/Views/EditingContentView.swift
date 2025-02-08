@@ -35,8 +35,8 @@ struct EditingContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // If we are in "click polygon" mode, show a small instruction text
-            if appState.isClickPolygonMode {
+            // If the user selected "Polygone par clic", show the small instruction
+            if appState.selectedTool?.name == "Polygone par clic" {
                 Text("Cliquez sur au moins deux points pour créer une forme. Appuyez sur Entrée pour valider.")
                     .padding(8)
                     .foregroundColor(.yellow)
@@ -88,7 +88,8 @@ struct EditingContentView: View {
                             }
                         } label: {
                             Text("Renderer(s)")
-                        }.frame(width: 100)
+                        }
+                        .frame(width: 100)
                     }
                 }
             }
@@ -114,7 +115,7 @@ struct EditingContentView: View {
 
     private func updateRenderers() {
         showTriangle = selectedRenderers.contains(.triangle)
-        // If needed, show/hide other renderers
+        // Additional show/hide if needed
     }
 
     private func loadPolygonsFromDocument() {

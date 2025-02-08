@@ -28,15 +28,14 @@ struct MetalCanvasView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> MTKView {
-        // 1. Initializes default device -> done above
+        // 1. Initializes default device
         guard let device = MTLCreateSystemDefaultDevice() else {
             fatalError("Metal is not supported on this device.")
         }
 
-        // 2. Instantiates the Metal view
-        
+        // 2. Instantiate the Metal view
         let mtkView = ZoomableMTKView(frame: .zero, device: device)
-        
+
         // 3. Create the main renderer and assign it to coordinator
         let mr = MainMetalRenderer(mtkView: mtkView, showTriangle: showTriangle)
         mtkView.delegate = mr
@@ -44,13 +43,13 @@ struct MetalCanvasView: NSViewRepresentable {
         context.coordinator.mainRenderer = mr
         mtkView.coordinator = context.coordinator // Indispensable for scrollWheel
         
-        // Stock into appState needs to go to the main actor for that.
+        // Store into appState on main actor
         DispatchQueue.main.async {
             self.appState.mainRenderer = mr
         }
-        
-        // 4. Background color (black)
-        mtkView.clearColor = MTLClearColorMake(0, 0, 0, 1)
+
+        // 4. Background color (taken from appState.selectedBackgroundColor)
+        mtkView.clearColor = appState.selectedBackgroundColor.toMTLClearColor()
         mtkView.enableSetNeedsDisplay = true
         mtkView.isPaused = false
         
@@ -74,10 +73,13 @@ struct MetalCanvasView: NSViewRepresentable {
     }
     
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // On each update, we update the zoom/pan, if we display the triangle renderer and previewColor
+        // On each update, we update the zoom/pan, the triangle, and colors
         context.coordinator.mainRenderer?.previewColor = appState.selectedColor.toSIMD4()
         context.coordinator.mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         context.coordinator.mainRenderer?.showTriangle(showTriangle)
+
+        // Update background color from appState
+        nsView.clearColor = appState.selectedBackgroundColor.toMTLClearColor()
     }
     
     // MARK: - Coordinator
@@ -131,11 +133,15 @@ struct MetalCanvasView: NSViewRepresentable {
             mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         }
         
-        // MARK: - Mouse click => creation of polygon points in "click polygon" mode
+        // MARK: - Mouse click => creation of polygon points in "Polygone par clic" mode
         
         @MainActor func mouseClicked(at nsPoint: NSPoint, in view: NSView) {
-            // Only record clicks if we are in polygon-click mode for the moment
-            guard appState.isClickPolygonMode else { return }
+            // Only record clicks if the selected tool is "Polygone par clic" for the moment
+            guard let selectedTool = appState.selectedTool,
+                  selectedTool.name == "Polygone par clic"
+            else {
+                return
+            }
             
             let bounds = view.bounds
             let x = (nsPoint.x / bounds.width) * 2.0 - 1.0
@@ -157,26 +163,28 @@ struct MetalCanvasView: NSViewRepresentable {
             let p = ECTPoint(x: Double(finalX), y: Double(finalY))
             clickedPoints.append(p)
             
-            // Update the preview points
+            // Update the preview points on the metal renderer
             mainRenderer?.pointsRenderer?.updatePreviewPoints(clickedPoints)
         }
         
-        // MARK: - Key pressed => validating the polygon
+        // MARK: - Key pressed => validating the polygon (Enter)
         
         @MainActor func keyPressedEnter() {
-            guard appState.isClickPolygonMode else { return }
+            // Only finalize if the selected tool is "Polygone par clic"
+            guard let selectedTool = appState.selectedTool,
+                  selectedTool.name == "Polygone par clic"
+            else {
+                return
+            }
             
             if clickedPoints.count >= 2 {
-                let colorVec = appState.selectedColor.toSIMD4()
-                mainRenderer?.addPolygon(points: clickedPoints, color: colorVec)
+                // This also saves the polygon in the current document
+                appState.storePolygonInDocument(clickedPoints, color: appState.selectedColor)
             }
             
             // Clear the points and hide the preview
             clickedPoints.removeAll()
             mainRenderer?.pointsRenderer?.updatePreviewPoints([])
-            
-            // Disable the "click polygon" mode
-            appState.isClickPolygonMode = false
         }
         
         // MARK: - Scroll wheel => zoom
@@ -220,19 +228,21 @@ struct MetalCanvasView: NSViewRepresentable {
     }
 }
 
+// MARK: - Extension to convert Color -> MTLClearColor
+
 extension Color {
-    /// Convert the SwiftUI color to a SIMD4<Float> in RGBA order
-    func toSIMD4() -> SIMD4<Float> {
+    /// Converts a SwiftUI Color to an MTLClearColor
+    func toMTLClearColor() -> MTLClearColor {
         let nsColor = NSColor(self)
         var r: CGFloat = 0
         var g: CGFloat = 0
         var b: CGFloat = 0
         var a: CGFloat = 0
-        
+
         if let converted = nsColor.usingColorSpace(.deviceRGB) {
             converted.getRed(&r, green: &g, blue: &b, alpha: &a)
         }
         
-        return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
+        return MTLClearColorMake(Double(r), Double(g), Double(b), Double(a))
     }
 }
