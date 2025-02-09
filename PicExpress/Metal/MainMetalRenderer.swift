@@ -23,6 +23,9 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     private let polygonRenderer: PolygonRenderer
     let pointsRenderer: PointsRenderer?
 
+    /// GPU fill sub-renderer
+    private let gpuFillRenderer: GPUFillRenderer
+
     var previewColor: SIMD4<Float> = .init(1, 1, 1, 1)
 
     // For transform
@@ -67,6 +70,9 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         self.triangleRenderer = TriangleRenderer(device: device, library: library)
         self.polygonRenderer = PolygonRenderer(device: device, library: library, appState: appState)
         self.pointsRenderer = PointsRenderer(device: device, library: library)
+
+        // GPU Fill
+        self.gpuFillRenderer = GPUFillRenderer(device: device, library: library)
 
         super.init()
 
@@ -133,6 +139,55 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
     @MainActor func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
         polygonRenderer.addPolygon(points: points, color: color)
+    }
+
+    // MARK: - GPU fill => Bonus function
+
+    /// “Fills” the polygon (e.g. the one containing (sx,sy))
+    /// by drawing in fillTexture via a render pass offscreen,
+    /// so that the texture is modified.
+    ///
+    /// polygonPoints = the polygon's [SIMD2<Float>] list
+    /// color = the RGBA color
+    ///
+    /// Can be called from fillTexturePixelByPixel(...) if fillAlgo==.gpuFragment
+    @MainActor
+    func fillPolygonOnGPU(polygonPoints: [SIMD2<Float>], color: SIMD4<Float>) {
+        guard let cmdQ = commandQueue,
+              let cmdBuff = cmdQ.makeCommandBuffer(),
+              let fillTex = fillTexture
+        else {
+            print("No commandQueue or fillTexture => can't GPU fill")
+            return
+        }
+
+        // We configure the pipeline
+        gpuFillRenderer.setPolygon(polygon: polygonPoints, fillColor: color)
+
+        // We want to write in fillTex
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = fillTex
+        rpd.colorAttachments[0].loadAction = .load // we want to keep what was already there
+        rpd.colorAttachments[0].storeAction = .store // store the result
+        // => if we want to clear : .clear + define clearColor
+
+        if let encoder = cmdBuff.makeRenderCommandEncoder(descriptor: rpd) {
+            gpuFillRenderer.draw(encoder: encoder)
+            encoder.endEncoding()
+        }
+
+        cmdBuff.commit()
+        cmdBuff.waitUntilCompleted()
+
+        // => fillTexture is updated
+        // => reload cpuBuffer if necessary:
+        if var cbuf = cpuBuffer {
+            fillTex.getBytes(&cbuf,
+                             bytesPerRow: fillTex.width * 4,
+                             from: MTLRegionMake2D(0, 0, fillTex.width, fillTex.height),
+                             mipmapLevel: 0)
+            cpuBuffer = cbuf
+        }
     }
 
     // MARK: - MTKViewDelegate

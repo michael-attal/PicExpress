@@ -15,6 +15,7 @@ public enum FillAlgorithm: String, Identifiable, CaseIterable, Sendable, Selecti
     case seedStack = "Germes (stack)"
     case scanline = "Scanline"
     case lca = "LCA"
+    case gpuFragment = "GPU Fill"
 
     /// Returns the rawValue as the description
     public var description: String { rawValue }
@@ -33,6 +34,8 @@ public enum FillAlgorithms {
         let newPoly = StoredPolygon(points: polygon.points, color: floatArr)
         return newPoly
     }
+
+    // MARK: - fillPixels CPU
 
     /// Public method to fill pixels in the CPU buffer, depending on `fillAlgo`.
     /// - Parameters:
@@ -81,16 +84,16 @@ public enum FillAlgorithms {
 
         case .lca:
             print("Filling with LCA algorithm")
+            // LCA CPU
             guard let polys = polygons, !polys.isEmpty else {
                 print("LCA fill: no polygons => no fill done.")
                 return
             }
-            // Find polygon (startX,startY)
+            // Find polygon that contain (startX,startY)
             for poly in polys {
-                if isPointInPolygon(
-                    ECTPoint(x: Double(startX), y: Double(startY)),
-                    polygon: poly.points
-                ) {
+                if isPointInPolygon(ECTPoint(x: Double(startX), y: Double(startY)),
+                                    polygon: poly.points)
+                {
                     fillPolygonLCA(
                         polygon: poly,
                         buffer: &buffer,
@@ -102,6 +105,11 @@ public enum FillAlgorithms {
                 }
             }
             print("LCA fill: no polygon found containing (\(startX),\(startY)). No fill done.")
+
+        case .gpuFragment:
+            // We don't do anything here on the CPU side. We'll leave it to
+            // MainMetalRenderer take care of this via a “GPU Fill” mode.
+            print("fillPixels with .gpuFragment => do nothing in CPU method.")
         }
     }
 
@@ -124,9 +132,9 @@ public enum FillAlgorithms {
         setPixelColor(&buf, w, h, x, y, newColor)
 
         floodFillRecursive(&buf, w, h, x+1, y, targetColor, newColor)
-        floodFillRecursive(&buf, w, h, x - 1, y, targetColor, newColor)
+        floodFillRecursive(&buf, w, h, x-1, y, targetColor, newColor)
         floodFillRecursive(&buf, w, h, x, y+1, targetColor, newColor)
-        floodFillRecursive(&buf, w, h, x, y - 1, targetColor, newColor)
+        floodFillRecursive(&buf, w, h, x, y-1, targetColor, newColor)
     }
 
     // MARK: - (B) Fill by Germes (stack)
@@ -155,9 +163,9 @@ public enum FillAlgorithms {
             if curr==target {
                 setPixelColor(&buf, w, h, xx, yy, newColor)
                 stack.append((xx+1, yy))
-                stack.append((xx - 1, yy))
+                stack.append((xx-1, yy))
                 stack.append((xx, yy+1))
-                stack.append((xx, yy - 1))
+                stack.append((xx, yy-1))
             }
         }
     }
@@ -196,7 +204,7 @@ public enum FillAlgorithms {
             }
 
             let x1 = left+1
-            let x2 = right - 1
+            let x2 = right-1
             if x1<=x2 {
                 // fill the row
                 for x in x1...x2 {
@@ -207,7 +215,7 @@ public enum FillAlgorithms {
             // check the line above & below
             if x1<=x2 {
                 // above
-                let rowAbove = startY - 1
+                let rowAbove = startY-1
                 if rowAbove>=0 {
                     var x = x1
                     while x<=x2 {
@@ -240,7 +248,7 @@ public enum FillAlgorithms {
         }
     }
 
-    // MARK: - (D) Fill by LCA (Liste des Côtés Actifs) - polygon-based
+    // MARK: - (D) Fill by LCA (Liste des Côtés Actifs) - CPU
 
     private static func fillPolygonLCA(
         polygon: StoredPolygon,
@@ -262,15 +270,15 @@ public enum FillAlgorithms {
         }
         // Clipper aux bornes
         yMin = max(yMin, 0)
-        yMax = min(yMax, height - 1)
+        yMax = min(yMax, height-1)
         if yMin>yMax { return }
 
         // Builds edge list
         var edges: [EdgeData] = []
         for i in 0..<pts.count {
             let j = (i+1) % pts.count
-            var x1 = pts[i].x, y1 = pts[i].y
-            var x2 = pts[j].x, y2 = pts[j].y
+            var x1 = Float(pts[i].x), y1 = Float(pts[i].y)
+            var x2 = Float(pts[j].x), y2 = Float(pts[j].y)
             if y2<y1 {
                 swap(&x1, &x2)
                 swap(&y1, &y2)
@@ -279,25 +287,25 @@ public enum FillAlgorithms {
                 // horizontal => ignore
                 continue
             }
-            let dx = x2 - x1
-            let dy = y2 - y1
-            let invSlope = dx / dy
+            let dx = x2-x1
+            let dy = y2-y1
+            let invSlope = dx/dy
             edges.append(EdgeData(xMin: x1, yMin: y1, yMax: y2, invSlope: invSlope))
         }
 
         let fillByteColor = colorToByteTuple(fillColor)
         for scanY in yMin...yMax {
-            var xIntersects: [Double] = []
+            var xIntersects: [Float] = []
             for e in edges {
-                if Double(scanY)>=e.yMin, Double(scanY)<e.yMax {
-                    let x = e.xMin+(Double(scanY) - e.yMin)*e.invSlope
-                    xIntersects.append(x)
+                if Float(scanY)>=e.yMin, Float(scanY)<e.yMax {
+                    let xx = e.xMin+(Float(scanY)-e.yMin)*e.invSlope
+                    xIntersects.append(xx)
                 }
             }
             if xIntersects.isEmpty { continue }
             xIntersects.sort()
             var i = 0
-            while i<xIntersects.count - 1 {
+            while i<xIntersects.count-1 {
                 let x1 = Int(ceil(xIntersects[i]))
                 let x2 = Int(floor(xIntersects[i+1]))
                 if x1<=x2 {
@@ -312,16 +320,20 @@ public enum FillAlgorithms {
         }
     }
 
-    // MARK: - isPointInPolygon (for LCA usage)
+    // MARK: - Helpers
 
-    private static func isPointInPolygon(
-        _ p: ECTPoint,
-        polygon: [Point2D]
-    ) -> Bool {
-        let x = p.x
-        let y = p.y
+    fileprivate struct EdgeData {
+        let xMin: Float
+        let yMin: Float
+        let yMax: Float
+        let invSlope: Float
+    }
+
+    private static func isPointInPolygon(_ pt: ECTPoint, polygon: [Point2D]) -> Bool {
+        let x = pt.x
+        let y = pt.y
         var inside = false
-        var j = polygon.count - 1
+        var j = polygon.count-1
         for i in 0..<polygon.count {
             let xi = polygon[i].x
             let yi = polygon[i].y
@@ -329,7 +341,7 @@ public enum FillAlgorithms {
             let yj = polygon[j].y
 
             let intersect = ((yi>y) != (yj>y)) &&
-                (x<(xj - xi)*(y - yi) / (yj - yi)+xi)
+                (x<(xj-xi)*(y-yi)/(yj-yi)+xi)
             if intersect {
                 inside.toggle()
             }
@@ -338,32 +350,17 @@ public enum FillAlgorithms {
         return inside
     }
 
-    // MARK: - Internal structures & utils
-
-    fileprivate struct EdgeData {
-        let xMin: Double
-        let yMin: Double
-        let yMax: Double
-        let invSlope: Double
-    }
-
     private static func colorToByteTuple(_ color: Color) -> (UInt8, UInt8, UInt8, UInt8) {
-        // Sur macOS, on peut convertir Color -> NSColor
-        let cgColor = NSColor(color).usingColorSpace(.deviceRGB) ?? .black
+        let cg = NSColor(color).usingColorSpace(.deviceRGB) ?? .black
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        cgColor.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return (
-            UInt8(clamping: Int(r*255)),
-            UInt8(clamping: Int(g*255)),
-            UInt8(clamping: Int(b*255)),
-            UInt8(clamping: Int(a*255))
-        )
+        cg.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (UInt8(r*255), UInt8(g*255), UInt8(b*255), UInt8(a*255))
     }
 
     private static func colorToFloatArray(_ color: Color) -> [Float] {
-        let cgColor = NSColor(color).usingColorSpace(.deviceRGB) ?? .black
+        let cg = NSColor(color).usingColorSpace(.deviceRGB) ?? .black
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        cgColor.getRed(&r, green: &g, blue: &b, alpha: &a)
+        cg.getRed(&r, green: &g, blue: &b, alpha: &a)
         return [Float(r), Float(g), Float(b), Float(a)]
     }
 

@@ -447,19 +447,42 @@ struct MetalCanvasView: NSViewRepresentable {
             let ty = Int((size.height - nsPoint.y)*CGFloat(tex.height) / size.height)
             if tx < 0 || tx >= tex.width || ty < 0 || ty >= tex.height { return }
 
+            // If .gpuFragment mode => “fillPolygonOnGPU”.
+            if appState.fillAlgorithm == .gpuFragment {
+                let polys = appState.selectedDocument?.loadAllPolygons() ?? []
+                // Find the polygon containing (tx,ty)
+                let ept = ECTPoint(x: Double(tx), y: Double(ty))
+                for sp in polys {
+                    if isPointInPolygon(ept, polygon: sp.points) {
+                        // Convert to [SIMD2<Float>]
+                        let floatPoints = sp.points.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+                        // color
+                        let c4 = appState.selectedColor.toSIMD4()
+                        // GPU
+                        mr.fillPolygonOnGPU(polygonPoints: floatPoints, color: c4)
+                        return
+                    }
+                }
+                print("No polygon found at that point => no gpu fill.")
+                return
+            }
+
+            // Sinon, mode CPU => on lit, on appelle FillAlgorithms.fillPixels...
             tex.getBytes(&buf,
                          bytesPerRow: tex.width*4,
                          from: MTLRegionMake2D(0, 0, tex.width, tex.height),
                          mipmapLevel: 0)
 
-            FillAlgorithms.fillPixels(buffer: &buf,
-                                      width: tex.width,
-                                      height: tex.height,
-                                      startX: tx,
-                                      startY: ty,
-                                      fillAlgo: appState.fillAlgorithm,
-                                      fillColor: appState.selectedColor,
-                                      polygons: appState.selectedDocument?.loadAllPolygons())
+            FillAlgorithms.fillPixels(
+                buffer: &buf,
+                width: tex.width,
+                height: tex.height,
+                startX: tx,
+                startY: ty,
+                fillAlgo: appState.fillAlgorithm,
+                fillColor: appState.selectedColor,
+                polygons: appState.selectedDocument?.loadAllPolygons()
+            )
 
             tex.replace(region: MTLRegionMake2D(0, 0, tex.width, tex.height),
                         mipmapLevel: 0,
