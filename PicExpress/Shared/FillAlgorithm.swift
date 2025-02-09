@@ -9,18 +9,23 @@ import Foundation
 import SwiftUI
 
 /// Enumeration of fill algorithms
-enum FillAlgorithm: String, Identifiable, CaseIterable, Sendable {
+enum FillAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem
+{
     var id: String { rawValue }
 
     case seedRecursive = "Germes (récursif)"
     case seedStack = "Germes (stack)"
     case scanline = "Scanline"
     case lca = "LCA"
+
+    /// Returns the rawValue as the description
+    public var description: String { rawValue }
 }
 
 // MARK: - Utility
 
-private func colorToFloatArray(_ color: Color) -> [Float] {
+private func colorToFloatArray(_ color: Color) -> [Float]
+{
     let cgColor = NSColor(color).usingColorSpace(.deviceRGB) ?? .black
     var r: CGFloat = 0
     var g: CGFloat = 0
@@ -30,14 +35,16 @@ private func colorToFloatArray(_ color: Color) -> [Float] {
     return [Float(r), Float(g), Float(b), Float(a)]
 }
 
-private func colorToByteTuple(_ color: Color) -> (UInt8, UInt8, UInt8, UInt8) {
+private func colorToByteTuple(_ color: Color) -> (UInt8, UInt8, UInt8, UInt8)
+{
     let f = colorToFloatArray(color)
     return (UInt8(f[0]*255), UInt8(f[1]*255), UInt8(f[2]*255), UInt8(f[3]*255))
 }
 
 /// Utility class for fill algorithms
 @MainActor
-final class FillAlgorithms {
+final class FillAlgorithms
+{
     /// Just sets the color (vector fill)
     static func fillPolygonVector(_ polygon: StoredPolygon,
                                   with fillAlgo: FillAlgorithm,
@@ -57,7 +64,8 @@ final class FillAlgorithms {
                            fillAlgo: FillAlgorithm,
                            fillColor: Color)
     {
-        switch fillAlgo {
+        switch fillAlgo
+        {
         case .seedRecursive:
             floodFillRecursive(&buffer, width, height,
                                startX, startY,
@@ -117,12 +125,14 @@ final class FillAlgorithms {
         var stack: [(Int, Int)] = []
         stack.append((startX, startY))
 
-        while !stack.isEmpty {
+        while !stack.isEmpty
+        {
             let (xx, yy) = stack.removeLast()
             if xx<0||xx>=w||yy<0||yy>=h { continue }
 
             let curr = getPixelColor(buf, w, h, xx, yy)
-            if curr==target {
+            if curr==target
+            {
                 setPixelColor(&buf, w, h, xx, yy, newColor)
                 stack.append((xx+1, yy))
                 stack.append((xx-1, yy))
@@ -148,39 +158,48 @@ final class FillAlgorithms {
         var stack: [(Int, Int)] = []
         stack.append((sx, sy))
 
-        while !stack.isEmpty {
+        while !stack.isEmpty
+        {
             let (startX, startY) = stack.removeLast()
             if startY<0||startY>=h { continue }
 
             // Move left
             var left = startX
-            while left>=0, getPixelColor(buf, w, h, left, startY)==target {
+            while left>=0, getPixelColor(buf, w, h, left, startY)==target
+            {
                 left -= 1
             }
             // Move right
             var right = startX
-            while right<w, getPixelColor(buf, w, h, right, startY)==target {
+            while right<w, getPixelColor(buf, w, h, right, startY)==target
+            {
                 right += 1
             }
 
             let x1 = left+1
             let x2 = right-1
 
-            if x1<=x2 {
+            if x1<=x2
+            {
                 // fill
-                for x in x1...x2 {
+                for x in x1...x2
+                {
                     setPixelColor(&buf, w, h, x, startY, nc)
                 }
             }
 
             // check lines above/below
-            if x1<=x2 {
-                for x in x1...x2 {
-                    if startY > 0 {
+            if x1<=x2
+            {
+                for x in x1...x2
+                {
+                    if startY > 0
+                    {
                         let cUp = getPixelColor(buf, w, h, x, startY-1)
                         if cUp==target { stack.append((x, startY-1)) }
                     }
-                    if startY<(h-1) {
+                    if startY<(h-1)
+                    {
                         let cDn = getPixelColor(buf, w, h, x, startY+1)
                         if cDn==target { stack.append((x, startY+1)) }
                     }

@@ -16,6 +16,9 @@ import SwiftUI
     /// The main metal renderer created by MetalCanvasView
     var mainRenderer: MainMetalRenderer?
 
+    // We keep a reference to the coordinator so we can call updatePanGestureEnabled
+    weak var mainCoordinator: MetalCanvasView.Coordinator?
+
     /// The currently opened document (if any)
     var selectedDocument: PicExpressDocument?
 
@@ -45,6 +48,9 @@ import SwiftUI
 
     // When user picks the "Découpage" tool, we store the points of the freehand or clicked polygon:
     var lassoPoints: [ECTPoint] = []
+
+    // For the shape tool, we store the current shape type if the user chooses "Formes".
+    var currentShapeType: ShapeType? = nil
 
     /// Stores the given polygon in the current selectedDocument, then displays it immediately.
     func storePolygonInDocument(_ points: [ECTPoint], color: Color) {

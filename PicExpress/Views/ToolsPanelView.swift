@@ -14,9 +14,21 @@ struct Tool: Identifiable, Hashable {
     let systemImage: String
 }
 
+/// This enum describes the different shapes we can create when using the "Formes" tool.
+public enum ShapeType: String, CaseIterable, Sendable, SelectionItem {
+    case rectangle
+    case square
+    case circle
+    case ellipse
+    case triangle
+
+    public var description: String { rawValue }
+}
+
 /// Side panel: tool list
 struct ToolsPanelView: View {
-    /// This callback is used only for the "Polygone" (text-based) creation (when the user clicks "Appliquer" in PolygonToolView)
+    /// This callback is used only for the "Polygone" (text-based) creation
+    /// (when the user clicks "Appliquer" in PolygonToolView).
     let onPolygonPoints: ([ECTPoint], Color) -> Void
 
     @Environment(AppState.self) private var appState
@@ -26,10 +38,15 @@ struct ToolsPanelView: View {
 
     @State private var selectedTool: Tool? = nil
     @State private var showPolygonSheet = false
-    @State private var showPolygonSheetTwo = false // Dumb way to display a sheet after another (in my case, the confirmation dialogue for the selected clipping algorithm BEFORE the PolygonToolView).
 
-    @State private var showFillAlgorithmMenu = false
-    @State private var showPolygonClippingAlgoMenu = false
+    // For the selection sheet
+    @State private var showSelectionSheet = false
+    @State private var selectionTitle = ""
+
+    // We store items as [AnySelectionItem]
+    @State private var selectionOptions: [AnySelectionItem] = []
+    // The handler calls back when user picks an item
+    @State private var selectionHandler: ((AnySelectionItem) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -39,10 +56,12 @@ struct ToolsPanelView: View {
             // Background color picker
             HStack {
                 Text("Fond :")
-                ColorPicker("", selection: Binding<Color>(
-                    get: { appState.selectedBackgroundColor },
-                    set: { appState.selectedBackgroundColor = $0 }
-                ), supportsOpacity: true)
+                ColorPicker("",
+                            selection: Binding<Color>(
+                                get: { appState.selectedBackgroundColor },
+                                set: { appState.selectedBackgroundColor = $0 }
+                            ),
+                            supportsOpacity: true)
                     .labelsHidden()
                     .frame(width: 50, height: 25)
             }
@@ -55,10 +74,12 @@ struct ToolsPanelView: View {
             // Drawing color picker
             HStack {
                 Text("Couleur :")
-                ColorPicker("", selection: Binding<Color>(
-                    get: { appState.selectedColor },
-                    set: { appState.selectedColor = $0 }
-                ), supportsOpacity: true)
+                ColorPicker("",
+                            selection: Binding<Color>(
+                                get: { appState.selectedColor },
+                                set: { appState.selectedColor = $0 }
+                            ),
+                            supportsOpacity: true)
                     .labelsHidden()
                     .frame(width: 50, height: 25)
             }
@@ -100,36 +121,25 @@ struct ToolsPanelView: View {
                     .padding(.vertical, 4)
                 }
                 .frame(maxWidth: .infinity)
-                .background(
-                    selectedTool == tool ? Color.blue.opacity(0.2) : Color.clear
-                )
+                .background(selectedTool == tool ? Color.blue.opacity(0.2) : Color.clear)
                 .cornerRadius(4)
             }
         }
         .padding(.horizontal)
-        // The FillAlgorithm selection can also be shown in a sheet or a menu
-        .confirmationDialog("Choisir l'algorithme de remplissage", isPresented: $showFillAlgorithmMenu) {
-            ForEach(FillAlgorithm.allCases) { algo in
-                Button(algo.rawValue) {
-                    appState.fillAlgorithm = algo
+        // Generic selection sheet
+        .sheet(isPresented: $showSelectionSheet) {
+            if let handler = selectionHandler {
+                SelectionSheetView<AnySelectionItem>(
+                    title: selectionTitle,
+                    options: selectionOptions,
+                    isPresented: $showSelectionSheet
+                ) { selectedAnyItem in
+                    handler(selectedAnyItem)
                 }
             }
-            // Button("Annuler", role: .cancel) {} If uncommented, hide the LCA fill option, idk why
-        }
-        // The polygon algorithm selection dialog
-        .confirmationDialog("Choisir l'algorithme de clipping pour le polygone", isPresented: $showPolygonClippingAlgoMenu) {
-            ForEach(PolygonClippingAlgorithm.allCases) { algo in
-                Button(algo.rawValue) {
-                    appState.selectedPolygonAlgorithm = algo
-                    if showPolygonSheet {
-                        showPolygonSheetTwo = true
-                    }
-                }
-            }
-            Button("Annuler", role: .cancel) {}
         }
         // If the user picks "Polygone", we show a sheet
-        .sheet(isPresented: $showPolygonSheetTwo) {
+        .sheet(isPresented: $showPolygonSheet) {
             PolygonToolView { points, color in
                 onPolygonPoints(points, color)
             }
@@ -140,9 +150,6 @@ struct ToolsPanelView: View {
         .onChange(of: selectedTool) { newValue in
             appState.selectedTool = newValue
         }
-        .onChange(of: appState.selectedTool) { newValue in
-            selectedTool = newValue
-        }
     }
 
     /// Called when the user taps on a tool
@@ -150,31 +157,80 @@ struct ToolsPanelView: View {
         print("Tool selected: \(tool.name)")
         selectedTool = tool
         showPolygonSheet = false
-        showFillAlgorithmMenu = false
-        showPolygonClippingAlgoMenu = false
+        showSelectionSheet = false
 
         switch tool.name {
         case "Polygone":
             // Ask the user for the polygon algorithm
-            showPolygonClippingAlgoMenu = true
-            // Then open the sheet for textual polygon creation
-            showPolygonSheet = true
+            showSelectionSheet(
+                title: "Choisir l'algorithme de clipping pour le polygone",
+                options: PolygonClippingAlgorithm.allCases
+            ) { algo in
+                appState.selectedPolygonAlgorithm = algo
+                showPolygonSheet = true
+            }
 
         case "Polygone par clic":
-            // As the user will click in the canvas, we ask for the polygon algorithm as well
-            showPolygonClippingAlgoMenu = true
+            showSelectionSheet(
+                title: "Choisir l'algorithme de clipping pour le polygone",
+                options: PolygonClippingAlgorithm.allCases
+            ) { algo in
+                appState.selectedPolygonAlgorithm = algo
+            }
 
         case "Remplissage":
-            // We show a dialog or a menu to pick the fill algorithm
-            showFillAlgorithmMenu = true
+            showSelectionSheet(
+                title: "Choisir l'algorithme de remplissage",
+                options: FillAlgorithm.allCases
+            ) { algo in
+                appState.fillAlgorithm = algo
+            }
 
         case "Découpage":
-            // The user draws a lasso in the metal canvas => see the coordinator
-            // Possibly we also want to ask which polygon algorithm to use for final clipping
-            showPolygonClippingAlgoMenu = true
+            showSelectionSheet(
+                title: "Choisir l'algorithme de découpage",
+                options: PolygonClippingAlgorithm.allCases
+            ) { algo in
+                appState.selectedPolygonAlgorithm = algo
+            }
+
+        case "Formes":
+            showSelectionSheet(
+                title: "Choisir la forme à dessiner",
+                options: ShapeType.allCases
+            ) { shape in
+                appState.currentShapeType = shape
+            }
 
         default:
             break
         }
+
+        appState.mainCoordinator?.updatePanGestureEnabled()
+    }
+
+    /// Helper function to show the selection sheet with a typed array of T: SelectionItem.
+    /// We convert them into [AnySelectionItem] to store in `selectionOptions`.
+    private func showSelectionSheet<T: SelectionItem>(
+        title: String,
+        options: [T],
+        handler: @escaping (T) -> Void
+    ) {
+        // 1) store the title
+        selectionTitle = title
+
+        // 2) convert to [AnySelectionItem]
+        selectionOptions = options.map { AnySelectionItem($0) }
+
+        // 3) store the final callback
+        selectionHandler = { anyItem in
+            // cast back to T
+            if let typedItem = anyItem.base as? T {
+                handler(typedItem)
+            }
+        }
+
+        // 4) show the sheet
+        showSelectionSheet = true
     }
 }

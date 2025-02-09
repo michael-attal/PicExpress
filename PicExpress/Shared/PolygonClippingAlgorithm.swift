@@ -9,7 +9,7 @@ import Foundation
 import simd
 
 /// Enumeration of polygon clipping/triangulation algorithms
-public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendable {
+public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem {
     public var id: String { rawValue }
 
     /// Triangulation via Ear Clipping
@@ -20,6 +20,9 @@ public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendab
 
     /// Clipping polygonal Sutherland-Hodgman
     case sutherlandHodgman = "Sutherland-Hodgman"
+
+    /// Returns the rawValue as the description
+    public var description: String { rawValue }
 }
 
 public func sutherlandHodgmanClip(
