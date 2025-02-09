@@ -31,13 +31,17 @@ import SwiftUI
     /// The currently selected tool in the left panel
     var selectedTool: Tool? = nil
 
-    // MARK: - Storing polygons in the current document
+    /// The fill algorithm chosen by the user (seed recursive, seed stack, scanline, LCA)
+    var fillAlgorithm: FillAlgorithm = .seedRecursive
+
+    /// If true, we do a pixel-based fill in a texture. If false, we simply recolor the polygon
+    var pixelFillEnabled: Bool = false
 
     /// Stores the given polygon in the current selectedDocument, then displays it immediately.
     func storePolygonInDocument(_ points: [ECTPoint], color: Color) {
         guard let doc = selectedDocument else { return }
 
-        // Convert SwiftUI.Color -> RGBA (deviceRGB)
+        // Convert SwiftUI.Color -> RGBA
         let uiColor = NSColor(color)
         var red: CGFloat = 0
         var green: CGFloat = 0
@@ -47,7 +51,7 @@ import SwiftUI
         if let converted = uiColor.usingColorSpace(.deviceRGB) {
             converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         } else {
-            print("Impossible de convertir la couleur (catalog color?).")
+            print("Impossible to convert color (catalog color?).")
         }
 
         // 1) Load existing polygons from the document

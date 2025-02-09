@@ -16,7 +16,7 @@ struct Tool: Identifiable, Hashable {
 
 /// Side panel: tool list
 struct ToolsPanelView: View {
-    /// This callback is used only for the "Polygone" (text-based) creation (when the user clicks "Appliquer" dans PolygonToolView)
+    /// This callback is used only for the "Polygone" (text-based) creation (when the user clicks "Appliquer" in PolygonToolView)
     let onPolygonPoints: ([ECTPoint], Color) -> Void
 
     @Environment(AppState.self) private var appState
@@ -27,12 +27,15 @@ struct ToolsPanelView: View {
     @State private var selectedTool: Tool? = nil
     @State private var showPolygonSheet = false
 
+    // For fill tool:
+    @State private var showFillAlgorithmMenu = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Outils")
                 .font(.headline)
 
-            // New color picker for background color
+            // Background color picker
             HStack {
                 Text("Fond :")
                 ColorPicker("", selection: Binding<Color>(
@@ -48,7 +51,7 @@ struct ToolsPanelView: View {
             .background(Color.gray.opacity(0.2))
             .cornerRadius(4)
 
-            // Existing color picker for drawing color
+            // Drawing color picker
             HStack {
                 Text("Couleur :")
                 ColorPicker("", selection: Binding<Color>(
@@ -63,6 +66,15 @@ struct ToolsPanelView: View {
             .padding(.horizontal, 4)
             .background(Color.gray.opacity(0.2))
             .cornerRadius(4)
+
+            Toggle(isOn: Binding<Bool>(
+                get: { appState.pixelFillEnabled },
+                set: { appState.pixelFillEnabled = $0 }
+            )) {
+                Text("Mode pixel fill")
+            }
+            .toggleStyle(.checkbox)
+            .padding(.vertical, 4)
 
             // List of tools (buttons)
             ForEach(tools) { tool in
@@ -85,22 +97,27 @@ struct ToolsPanelView: View {
             }
         }
         .padding(.horizontal)
+        // If the user picks "Polygone", we show a sheet
         .sheet(isPresented: $showPolygonSheet) {
-            /// PolygonToolView is the sheet used for text-based polygon creation
             PolygonToolView { points, color in
                 onPolygonPoints(points, color)
             }
         }
-        // When the panel appears or the user selects a tool, update local state
+        // The FillAlgorithm selection can also be shown in a sheet or a menu
+        .confirmationDialog("Choisir l'algorithme de remplissage", isPresented: $showFillAlgorithmMenu) {
+            ForEach(FillAlgorithm.allCases) { algo in
+                Button(algo.rawValue) {
+                    appState.fillAlgorithm = algo
+                }
+            }
+        }
         .onAppear {
             selectedTool = appState.selectedTool
         }
         .onChange(of: selectedTool) { newValue in
-            // Update appState when the user picks a tool
             appState.selectedTool = newValue
         }
         .onChange(of: appState.selectedTool) { newValue in
-            // If external code changes appState.selectedTool, reflect it here
             selectedTool = newValue
         }
     }
@@ -110,10 +127,19 @@ struct ToolsPanelView: View {
         print("Tool selected: \(tool.name)")
         selectedTool = tool
         showPolygonSheet = false
+        showFillAlgorithmMenu = false
 
-        // If it's the textual polygon creation, open the sheet
-        if tool.name == "Polygone" {
+        switch tool.name {
+        case "Polygone":
+            // If it's the textual polygon creation, open the sheet
             showPolygonSheet = true
+
+        case "Remplissage":
+            // We show a dialog or a menu to pick the fill algorithm
+            showFillAlgorithmMenu = true
+
+        default:
+            break
         }
     }
 }

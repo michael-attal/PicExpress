@@ -15,14 +15,18 @@ struct LeftPanelView: View {
     
     @Binding var selectedDocument: PicExpressDocument?
     
-    let onAddDocument: () -> Void
+    /// Called when user wants to create a new doc
+    /// We pass (docName, width, height)
+    let onAddDocument: (String, Int, Int) -> Void
     let onDeleteDocument: (PicExpressDocument) -> Void
     
-    /// List of tools to display
+    /// Tools
     let tools: [Tool]
     
-    // A closure that is called with new polygon points and color
+    /// When the user manually enters polygon points
     let onPolygonPoints: ([ECTPoint], Color) -> Void
+    
+    @State private var showNewDocSheet = false
     
     var body: some View {
         VStack(alignment: .leading) {
@@ -62,14 +66,20 @@ struct LeftPanelView: View {
             }
             
             Button {
-                onAddDocument()
+                showNewDocSheet = true
             } label: {
                 Label("Nouveau document", systemImage: "plus")
             }
             .padding(.horizontal)
             .buttonStyle(.borderedProminent)
+            .sheet(isPresented: $showNewDocSheet) {
+                // The sheet for new doc creation
+                NewDocumentSheet { docName, w, h in
+                    onAddDocument(docName, w, h)
+                }
+            }
             
-            // SECTION 2 : Tools panel - Only if a document is selected
+            // SECTION 2 : Tools if doc is open
             if appState.isDocumentOpen {
                 Divider()
                 ToolsPanelView(onPolygonPoints: onPolygonPoints, tools: tools)

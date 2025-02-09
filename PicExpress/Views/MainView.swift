@@ -16,11 +16,11 @@ struct MainView: View {
     @Query private var documents: [PicExpressDocument]
     @State private var selectedDocument: PicExpressDocument?
 
-    /// Basic startup tools (edit later from required tools of syllabus)
     private let tools: [Tool] = [
         Tool(name: "Remplissage", systemImage: "drop.fill"),
         Tool(name: "Gomme", systemImage: "eraser"),
         Tool(name: "Formes", systemImage: "square.on.circle"),
+        Tool(name: "Découpage", systemImage: "lasso"),
         // Tool(name: "Recadrage", systemImage: "crop"),
         Tool(name: "Polygone", systemImage: "hexagon.fill"),
         Tool(name: "Polygone par clic", systemImage: "hand.point.up.left")
@@ -35,7 +35,6 @@ struct MainView: View {
                 onDeleteDocument: deleteDocument,
                 tools: tools,
                 onPolygonPoints: { points, color in
-                    // Directly store via appState
                     appState.storePolygonInDocument(points, color: color)
                 }
             )
@@ -55,9 +54,11 @@ struct MainView: View {
 
     // MARK: - Actions
 
-    private func addDocument() {
+    private func addDocument(docName: String, width: Int, height: Int) {
         withAnimation {
-            let newDoc = PicExpressDocument(name: "Nouveau Document")
+            let newDoc = PicExpressDocument(name: docName,
+                                            width: width,
+                                            height: height)
             modelContext.insert(newDoc)
             selectedDocument = newDoc
         }

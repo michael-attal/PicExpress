@@ -8,7 +8,7 @@
 import MetalKit
 import simd
 
-/// Common shader struct (Polygon.metal/TriangleGradientColor.metal/...)
+/// Common uniform struct for polygons, triangles, etc.
 struct TransformUniforms {
     var transform: float4x4
     var polygonColor: SIMD4<Float> = .init(1, 0, 0, 1)
@@ -17,127 +17,160 @@ struct TransformUniforms {
 final class MainMetalRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private var commandQueue: MTLCommandQueue?
-    
-    // Sub-renderers, we can add more if needed
+
+    // Sub-renderers
     private let triangleRenderer: TriangleRenderer
     private let polygonRenderer: PolygonRenderer
-    let pointsRenderer: PointsRenderer? // Add a pointsRenderer for preview when placing point on "Polygone par clic" mode
-    var previewColor: SIMD4<Float> = .init(1, 1, 0, 1) // color of preview points
-    
-    // Buffers
+    let pointsRenderer: PointsRenderer?
+
+    var previewColor: SIMD4<Float> = .init(1, 1, 1, 1)
+
+    // For transform
     private var uniformBuffer: MTLBuffer?
     private var uniforms = TransformUniforms(transform: matrix_identity_float4x4)
-    
-    // Zoom/pan
+
     private var zoom: Float = 1.0
     private var pan: SIMD2<Float> = .zero
-    
-    // For testing: Do we show the triangle from Triangle Renderer or not
-    private var showTriangle: Bool
-    
-    // MARK: - Init
 
-    init(mtkView: MTKView, showTriangle: Bool) {
-        self.showTriangle = showTriangle
-        
-        guard let device = mtkView.device else {
-            fatalError("No MTLDevice on this MTKView.")
+    // Do we show the triangle test ?
+    private var showTriangleFlag: Bool
+
+    private let texWidth: Int
+    private let texHeight: Int
+
+    // The texture for pixel fill
+    var fillTexture: MTLTexture?
+    var cpuBuffer: [UInt8]?
+
+    init(mtkView: MTKView,
+         showTriangle: Bool,
+         width: Int,
+         height: Int)
+    {
+        self.showTriangleFlag = showTriangle
+        self.texWidth = width
+        self.texHeight = height
+
+        guard let dev = mtkView.device else {
+            fatalError("No MTLDevice found for this MTKView.")
         }
-        self.device = device
-        
-        // Charge metal library
+        self.device = dev
+
         let library = device.makeDefaultLibrary()
-        
-        // Instantiate the sub-renderers
+
+        // Sub-renderers
         self.triangleRenderer = TriangleRenderer(device: device, library: library)
         self.polygonRenderer = PolygonRenderer(device: device, library: library)
         self.pointsRenderer = PointsRenderer(device: device, library: library)
-        
+
         super.init()
-        
-        // Init ressources
+
         buildResources()
     }
-    
+
     private func buildResources() {
         commandQueue = device.makeCommandQueue()
-        
-        // Create a uniformBuffer to store TransformUniforms
-        uniformBuffer = device.makeBuffer(
-            length: MemoryLayout<TransformUniforms>.size,
-            options: []
-        )
+
+        // Create uniform buffer
+        uniformBuffer = device.makeBuffer(length: MemoryLayout<TransformUniforms>.size,
+                                          options: [])
+
+        // Create fillTexture with doc size
+        let desc = MTLTextureDescriptor()
+        desc.pixelFormat = .rgba8Unorm
+        desc.width = texWidth
+        desc.height = texHeight
+        desc.usage = [.shaderRead, .shaderWrite, .renderTarget]
+        desc.storageMode = .managed
+
+        if let t = device.makeTexture(descriptor: desc) {
+            fillTexture = t
+            cpuBuffer = [UInt8](repeating: 0, count: texWidth * texHeight * 4)
+
+            if var cbuf = cpuBuffer {
+                // Fill with black or any color
+                for i in 0 ..< (texWidth * texHeight) {
+                    let idx = i * 4
+                    cbuf[idx+0] = 0 // R
+                    cbuf[idx+1] = 0 // G
+                    cbuf[idx+2] = 0 // B
+                    cbuf[idx+3] = 255 // A
+                }
+                // Upload to GPU
+                t.replace(region: MTLRegionMake2D(0, 0, texWidth, texHeight),
+                          mipmapLevel: 0,
+                          withBytes: &cbuf,
+                          bytesPerRow: texWidth * 4)
+
+                cpuBuffer = cbuf
+            }
+        }
     }
-    
+
     // MARK: - Public
-    
-    /// Adds a triangulated polygon (via EarClipping) to the PolygonRenderer
-    func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
-        polygonRenderer.addPolygon(points: points, color: color)
+
+    func showTriangle(_ flag: Bool) {
+        showTriangleFlag = flag
     }
-    
-    /// Clear existing polygons from the renderer
-    func clearPolygons() {
-        polygonRenderer.clearPolygons()
-    }
-    
-    func showTriangle(_ shouldDisplayTriangle: Bool) {
-        showTriangle = shouldDisplayTriangle
-    }
-    
+
     func setZoomAndPan(zoom: CGFloat, panOffset: CGSize) {
         self.zoom = Float(zoom)
         pan.x = Float(panOffset.width)
         pan.y = Float(panOffset.height)
     }
-    
-    // MARK: - MTKViewDelegate
-    
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // handle resizing if needed
+
+    func clearPolygons() {
+        polygonRenderer.clearPolygons()
     }
-    
+
+    func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
+        polygonRenderer.addPolygon(points: points, color: color)
+    }
+
+    // MARK: - MTKViewDelegate
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // We can handle resizing if we want, but we keep our texture size fixed.
+    }
+
     func draw(in view: MTKView) {
-        guard
-            let passDescriptor = view.currentRenderPassDescriptor,
-            let drawable = view.currentDrawable,
-            let commandQueue = commandQueue,
-            let commandBuffer = commandQueue.makeCommandBuffer()
-        else {
-            return
-        }
-        
+        guard let rpd = view.currentRenderPassDescriptor,
+              let drawable = view.currentDrawable,
+              let cmdQ = commandQueue,
+              let cmdBuff = cmdQ.makeCommandBuffer()
+        else { return }
+
         updateUniforms()
-        
-        let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor)!
-        
-        // Optional triangle
-        if showTriangle {
+
+        let encoder = cmdBuff.makeRenderCommandEncoder(descriptor: rpd)!
+
+        // optional triangle
+        if showTriangleFlag {
             triangleRenderer.draw(
                 encoder: encoder,
                 uniformBuffer: uniformBuffer
             )
         }
-        
-        // Polygons
+
+        // polygons
         polygonRenderer.draw(
             encoder: encoder,
             uniformBuffer: uniformBuffer
         )
-        
-        // Preview points
+
+        // points
         pointsRenderer?.draw(
             encoder: encoder,
             uniformBuffer: uniformBuffer
         )
-        
+
         encoder.endEncoding()
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
+        cmdBuff.present(drawable)
+        cmdBuff.commit()
     }
-    
+
     private func updateUniforms() {
-        // 1) Build the transform matrix from zoom & pan
+        // build transform from zoom/pan
         let s = zoom
         let scaleMatrix = float4x4(
             simd_float4(s, 0, 0, 0),
@@ -145,7 +178,6 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             simd_float4(0, 0, 1, 0),
             simd_float4(0, 0, 0, 1)
         )
-        
         let tx = pan.x * 2.0
         let ty = -pan.y * 2.0
         let translationMatrix = float4x4(
@@ -154,11 +186,10 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             simd_float4(0, 0, 1, 0),
             simd_float4(tx, ty, 0, 1)
         )
-        
-        uniforms.transform = translationMatrix * scaleMatrix
 
+        uniforms.transform = translationMatrix * scaleMatrix
         uniforms.polygonColor = previewColor
-        
+
         if let ub = uniformBuffer {
             memcpy(ub.contents(), &uniforms, MemoryLayout<TransformUniforms>.size)
         }

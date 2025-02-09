@@ -83,3 +83,20 @@ extension Color {
         return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
     }
 }
+
+extension Color {
+    /// Converts a SwiftUI Color to an MTLClearColor
+    func toMTLClearColor() -> MTLClearColor {
+        let nsColor = NSColor(self)
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+
+        if let converted = nsColor.usingColorSpace(.deviceRGB) {
+            converted.getRed(&r, green: &g, blue: &b, alpha: &a)
+        }
+
+        return MTLClearColorMake(Double(r), Double(g), Double(b), Double(a))
+    }
+}

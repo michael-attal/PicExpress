@@ -22,19 +22,28 @@ struct StoredPolygon: Codable {
 
 @Model
 final class PicExpressDocument {
-    /// Document or project name
+    /// Document name
     var name: String
 
     /// Date created or last modified
     var timestamp: Date
 
-    /// Binary storage of our polygons. We use a [StoredPolygon] array encoded/decoded in JSON to load polygon into metal canvas later
+    /// The "pixel width" and "pixel height" of our canvas
+    var width: Int
+    var height: Int
+
+    /// Binary storage of polygons (serialized in JSON).
     var verticesData: Data?
 
-    // MARK: - Init
-
-    init(name: String, timestamp: Date = Date(), verticesData: Data? = nil) {
+    init(name: String,
+         width: Int,
+         height: Int,
+         timestamp: Date = Date(),
+         verticesData: Data? = nil)
+    {
         self.name = name
+        self.width = width
+        self.height = height
         self.timestamp = timestamp
         self.verticesData = verticesData
     }
@@ -43,8 +52,7 @@ final class PicExpressDocument {
 // MARK: - Extension: loading / saving functions
 
 extension PicExpressDocument {
-    /// Loads the complete list of polygons stored in `verticesData`.
-    /// Returns [] if there is nothing or if deserialization fails.
+    /// Loads all polygons from `verticesData`.
     func loadAllPolygons() -> [StoredPolygon] {
         guard let data = verticesData else { return [] }
         do {
@@ -55,7 +63,7 @@ extension PicExpressDocument {
         }
     }
 
-    /// Saves a complete list of polygons in `verticesData`.
+    /// Saves a list of polygons in `verticesData`.
     func saveAllPolygons(_ polygons: [StoredPolygon]) {
         do {
             let data = try JSONEncoder().encode(polygons)
