@@ -9,15 +9,25 @@ import Foundation
 import SwiftData
 
 /// Represents an encodable 2D point
-struct Point2D: Codable {
-    let x: Double
-    let y: Double
+public struct Point2D: Codable {
+    public let x: Double
+    public let y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
 }
 
 /// Represents a stored polygon: list of points + RGBA color
-struct StoredPolygon: Codable {
-    let points: [Point2D]
-    let color: [Float] // (r, g, b, a)
+public struct StoredPolygon: Codable {
+    public let points: [Point2D]
+    public let color: [Float] // (r, g, b, a)
+
+    public init(points: [Point2D], color: [Float]) {
+        self.points = points
+        self.color = color
+    }
 }
 
 @Model

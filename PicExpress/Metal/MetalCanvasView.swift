@@ -458,7 +458,8 @@ struct MetalCanvasView: NSViewRepresentable {
                                       startX: tx,
                                       startY: ty,
                                       fillAlgo: appState.fillAlgorithm,
-                                      fillColor: appState.selectedColor)
+                                      fillColor: appState.selectedColor,
+                                      polygons: appState.selectedDocument?.loadAllPolygons())
 
             tex.replace(region: MTLRegionMake2D(0, 0, tex.width, tex.height),
                         mipmapLevel: 0,
