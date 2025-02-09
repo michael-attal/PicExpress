@@ -33,7 +33,7 @@ struct LeftPanelView: View {
             // SECTION 1 : list of docs
             List(selection: $selectedDocument) {
                 Section("Mes documents") {
-                    ForEach(documents) { doc in
+                    ForEach(documents.sorted(by: { $0.createdAt > $1.createdAt })) { doc in
                         HStack {
                             Text(doc.name)
                             Spacer()

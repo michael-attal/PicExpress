@@ -25,7 +25,9 @@ final class PicExpressDocument {
     /// Document name
     var name: String
 
-    /// Date created or last modified
+    var createdAt: Date = Date()
+    
+    /// Date last modified
     var timestamp: Date
 
     /// The "pixel width" and "pixel height" of our canvas

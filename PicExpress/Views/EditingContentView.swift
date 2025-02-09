@@ -35,9 +35,8 @@ struct EditingContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // If the user selected "Polygone par clic", show the small instruction
-            if appState.selectedTool?.name == "Polygone par clic" {
-                Text("Cliquez sur au moins deux points pour créer une forme. Appuyez sur Entrée pour valider.")
+            if appState.selectedTool?.name == "Polygone par clic" || appState.selectedTool?.name == "Découpage" {
+                Text("Cliquez sur au moins trois points pour créer une forme. Appuyez sur Entrée pour valider.")
                     .padding(8)
                     .foregroundColor(.yellow)
             }

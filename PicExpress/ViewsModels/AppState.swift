@@ -37,6 +37,15 @@ import SwiftUI
     /// If true, we do a pixel-based fill in a texture. If false, we simply recolor the polygon
     var pixelFillEnabled: Bool = false
 
+    // Should we fill polygon interiors with color or only draw outlines
+    var fillPolygonBackground: Bool = true
+
+    // Which polygon clipping or triangulation algorithm to use
+    var selectedPolygonAlgorithm: PolygonClippingAlgorithm = .earClipping
+
+    // When user picks the "Découpage" tool, we store the points of the freehand or clicked polygon:
+    var lassoPoints: [ECTPoint] = []
+
     /// Stores the given polygon in the current selectedDocument, then displays it immediately.
     func storePolygonInDocument(_ points: [ECTPoint], color: Color) {
         guard let doc = selectedDocument else { return }

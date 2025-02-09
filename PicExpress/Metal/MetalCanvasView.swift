@@ -39,12 +39,14 @@ struct MetalCanvasView: NSViewRepresentable {
         let mr = MainMetalRenderer(mtkView: mtkView,
                                    showTriangle: showTriangle,
                                    width: docWidth,
-                                   height: docHeight)
+                                   height: docHeight,
+                                   appState: appState)
         mtkView.delegate = mr
 
         context.coordinator.mainRenderer = mr
         mtkView.coordinator = context.coordinator
 
+        // We keep a reference in appState
         DispatchQueue.main.async {
             self.appState.mainRenderer = mr
         }
@@ -88,6 +90,7 @@ struct MetalCanvasView: NSViewRepresentable {
         let appState: AppState
         var mainRenderer: MainMetalRenderer?
 
+        /// Temp store for "Polygone par clic"
         private var clickedPoints: [ECTPoint] = []
 
         init(
@@ -157,9 +160,19 @@ struct MetalCanvasView: NSViewRepresentable {
 
             switch tool.name {
             case "Polygone par clic":
+                // Collecting points
                 let wpt = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
                 clickedPoints.append(wpt)
                 mainRenderer?.pointsRenderer?.updatePreviewPoints(clickedPoints)
+
+            case "Découpage":
+                // Accumulating lasso points
+                let wpt = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                appState.lassoPoints.append(wpt)
+                mainRenderer?.pointsRenderer?.updatePreviewPoints(appState.lassoPoints)
+
+                // Signal the new window to the polygonRenderer
+                mainRenderer?.setClipWindow(appState.lassoPoints)
 
             case "Remplissage":
                 if appState.pixelFillEnabled {
@@ -178,44 +191,99 @@ struct MetalCanvasView: NSViewRepresentable {
 
         @MainActor func keyPressedEnter() {
             guard let tool = appState.selectedTool else { return }
-            if tool.name == "Polygone par clic" {
-                if clickedPoints.count>=2 {
+            switch tool.name {
+            case "Polygone par clic":
+                // We store in the document
+                if clickedPoints.count >= 3 {
                     appState.storePolygonInDocument(clickedPoints, color: appState.selectedColor)
                 }
                 clickedPoints.removeAll()
                 mainRenderer?.pointsRenderer?.updatePreviewPoints([])
+
+            case "Découpage":
+                // The user finishes the lasso => we clip all existing polygons
+                if !appState.lassoPoints.isEmpty {
+                    performLassoClipping(appState.lassoPoints)
+                    appState.lassoPoints.removeAll()
+                }
+                mainRenderer?.pointsRenderer?.updatePreviewPoints([])
+                // Reset window
+                mainRenderer?.setClipWindow([])
+
+            default:
+                break
             }
         }
 
-        // MARK: - Scroll wheel => we do a "zoom" like pinch?
+        // MARK: - Lasso clipping
+
+        @MainActor private func performLassoClipping(_ lasso: [ECTPoint]) {
+            // 1) Recover polygons from the document
+            guard let doc = appState.selectedDocument else { return }
+            var storedPolygons = doc.loadAllPolygons()
+            guard !storedPolygons.isEmpty else { return }
+
+            // 2) For each polygon, we clip via the chosen algo
+            var newPolys: [StoredPolygon] = []
+
+            for sp in storedPolygons {
+                let originalPoints = sp.points.map { ECTPoint(x: $0.x, y: $0.y) }
+                let clippedPoints: [ECTPoint]
+
+                switch appState.selectedPolygonAlgorithm {
+                case .earClipping:
+                    // not really for clipping => leave as is
+                    clippedPoints = originalPoints
+
+                case .cyrusBeck:
+                    clippedPoints = cyrusBeckClip(
+                        subjectPolygon: originalPoints,
+                        clipWindow: lasso
+                    )
+
+                case .sutherlandHodgman:
+                    clippedPoints = sutherlandHodgmanClip(
+                        subjectPolygon: originalPoints,
+                        clipWindow: lasso
+                    )
+                }
+
+                if clippedPoints.count >= 3 {
+                    let newPoly = StoredPolygon(
+                        points: clippedPoints.map { Point2D(x: $0.x, y: $0.y) },
+                        color: sp.color
+                    )
+                    newPolys.append(newPoly)
+                }
+            }
+
+            // 3) Save and redisplay
+            doc.saveAllPolygons(newPolys)
+            mainRenderer?.clearPolygons()
+            for p in newPolys {
+                let epts = p.points.map { ECTPoint(x: $0.x, y: $0.y) }
+                let c = SIMD4<Float>(p.color[0], p.color[1], p.color[2], p.color[3])
+                mainRenderer?.addPolygon(points: epts, color: c)
+            }
+        }
+
+        // MARK: - Scroll wheel => zoom
 
         func handleScrollWheel(_ event: NSEvent) {
             guard let view = event.window?.contentView else { return }
-
-            // On mac, deltaY>0 => scroll up => zoom in
-            // We'll do a factor
             let factor: CGFloat = 0.01
             let zoomFactor = 1 + event.deltaY*factor
             if zoomFactor <= 0 { return }
-
-            // anchor = mouse position in window coords => in local coords
-            let anchorInView = view.convert(event.locationInWindow, to: nil)
-            // But better: if the user scrolled in the "mtkView"
+            let oldZoom = zoom
             if let mtkView = view as? NSView {
                 let localPoint = mtkView.convert(event.locationInWindow, from: nil)
-
-                // anchor
-                let oldZoom = zoom
                 let anchorWorld = screenPointToWorld(localPoint, in: mtkView, zoom: oldZoom, pan: panOffset)
                 var newZoom = oldZoom*zoomFactor
-
-                // clamp
                 let minZ: CGFloat = 0.1
                 let maxZ: CGFloat = 8.0
                 newZoom = max(minZ, min(newZoom, maxZ))
                 zoom = newZoom
 
-                // anchor after
                 let anchorScreenAfter = worldPointToScreen(anchorWorld, in: mtkView, zoom: newZoom, pan: panOffset)
                 let dx = localPoint.x - anchorScreenAfter.x
                 let dy = localPoint.y - anchorScreenAfter.y
@@ -238,7 +306,11 @@ struct MetalCanvasView: NSViewRepresentable {
             for i in 0..<polys.count {
                 let sp = polys[i]
                 if isPointInPolygon(worldCoords, polygon: sp.points) {
-                    var updated = FillAlgorithms.fillPolygonVector(sp, with: appState.fillAlgorithm, color: appState.selectedColor)
+                    let updated = FillAlgorithms.fillPolygonVector(
+                        sp,
+                        with: appState.fillAlgorithm,
+                        color: appState.selectedColor
+                    )
                     polys[i] = updated
                     doc.saveAllPolygons(polys)
 
@@ -253,7 +325,7 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        // MARK: - fill texture
+        // MARK: - fill texture pixel by pixel
 
         @MainActor private func fillTexturePixelByPixel(_ nsPoint: NSPoint, in view: NSView) {
             guard let mr = mainRenderer else { return }
@@ -265,7 +337,7 @@ struct MetalCanvasView: NSViewRepresentable {
             let tx = Int(nsPoint.x*CGFloat(tex.width) / size.width)
             let ty = Int((size.height - nsPoint.y)*CGFloat(tex.height) / size.height)
 
-            if tx < 0||tx>=tex.width||ty < 0||ty>=tex.height { return }
+            if tx < 0 || tx >= tex.width || ty < 0 || ty >= tex.height { return }
 
             tex.getBytes(&buf,
                          bytesPerRow: tex.width*4,
@@ -287,8 +359,6 @@ struct MetalCanvasView: NSViewRepresentable {
 
             mr.cpuBuffer = buf
         }
-
-        // MARK: - isPointInPolygon
 
         private func isPointInPolygon(_ pt: ECTPoint, polygon: [Point2D]) -> Bool {
             let x = pt.x
@@ -318,17 +388,15 @@ struct MetalCanvasView: NSViewRepresentable {
                                 pan: CGSize) -> ECTPoint
         {
             let b = view.bounds
-            // normalized in [-1..1]
+            // normalized [-1..1]
             let xN = (pt.x / b.width)*2.0 - 1.0
             let yN = (pt.y / b.height)*2.0 - 1.0
 
-            // remove pan
             let tx = Float(pan.width)*2.0
             let ty = Float(-pan.height)*2.0
             var fx = Float(xN) - tx
             var fy = Float(yN) - ty
 
-            // remove zoom
             fx /= Float(zoom)
             fy /= Float(zoom)
 
@@ -360,8 +428,6 @@ struct MetalCanvasView: NSViewRepresentable {
         }
     }
 
-    // MARK: - ZoomableMTKView
-
     class ZoomableMTKView: MTKView {
         weak var coordinator: Coordinator?
 
@@ -377,6 +443,7 @@ struct MetalCanvasView: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { true }
 
         override func keyDown(with event: NSEvent) {
+            // Enter => keyCode = 36
             if event.keyCode == 36 {
                 coordinator?.keyPressedEnter()
             } else {

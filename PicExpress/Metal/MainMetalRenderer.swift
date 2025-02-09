@@ -42,14 +42,19 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     var fillTexture: MTLTexture?
     var cpuBuffer: [UInt8]?
 
+    // We keep a reference to appState to know fill modes, etc.
+    private weak var appState: AppState?
+
     init(mtkView: MTKView,
          showTriangle: Bool,
          width: Int,
-         height: Int)
+         height: Int,
+         appState: AppState?)
     {
         self.showTriangleFlag = showTriangle
         self.texWidth = width
         self.texHeight = height
+        self.appState = appState
 
         guard let dev = mtkView.device else {
             fatalError("No MTLDevice found for this MTKView.")
@@ -60,7 +65,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         // Sub-renderers
         self.triangleRenderer = TriangleRenderer(device: device, library: library)
-        self.polygonRenderer = PolygonRenderer(device: device, library: library)
+        self.polygonRenderer = PolygonRenderer(device: device, library: library, appState: appState)
         self.pointsRenderer = PointsRenderer(device: device, library: library)
 
         super.init()
@@ -96,7 +101,6 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
                     cbuf[idx+2] = 0 // B
                     cbuf[idx+3] = 255 // A
                 }
-                // Upload to GPU
                 t.replace(region: MTLRegionMake2D(0, 0, texWidth, texHeight),
                           mipmapLevel: 0,
                           withBytes: &cbuf,
@@ -123,15 +127,17 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         polygonRenderer.clearPolygons()
     }
 
-    func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
+    func setClipWindow(_ points: [ECTPoint]) {
+        polygonRenderer.setClipWindow(points)
+    }
+
+    @MainActor func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
         polygonRenderer.addPolygon(points: points, color: color)
     }
 
     // MARK: - MTKViewDelegate
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // We can handle resizing if we want, but we keep our texture size fixed.
-    }
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
         guard let rpd = view.currentRenderPassDescriptor,
@@ -144,7 +150,6 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         let encoder = cmdBuff.makeRenderCommandEncoder(descriptor: rpd)!
 
-        // optional triangle
         if showTriangleFlag {
             triangleRenderer.draw(
                 encoder: encoder,
@@ -152,13 +157,11 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             )
         }
 
-        // polygons
         polygonRenderer.draw(
             encoder: encoder,
             uniformBuffer: uniformBuffer
         )
 
-        // points
         pointsRenderer?.draw(
             encoder: encoder,
             uniformBuffer: uniformBuffer
@@ -170,7 +173,6 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func updateUniforms() {
-        // build transform from zoom/pan
         let s = zoom
         let scaleMatrix = float4x4(
             simd_float4(s, 0, 0, 0),
