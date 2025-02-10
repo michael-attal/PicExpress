@@ -23,7 +23,7 @@ struct MainView: View {
         Tool(name: "Formes", systemImage: "square.on.circle"),
         Tool(name: "Découpage", systemImage: "lasso"),
         // Tool(name: "Recadrage", systemImage: "crop"),
-        Tool(name: "Redimensionnement", systemImage: "move.3d"),
+        Tool(name: "Redimensionnement", systemImage: "hand.point.up.braille"),
         Tool(name: "Polygone", systemImage: "hexagon.fill"),
         Tool(name: "Polygone par clic", systemImage: "hand.point.up.left")
     ]

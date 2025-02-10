@@ -136,11 +136,13 @@ struct ToolsPanelView: View {
                                 appState.pixelFillEnabled = $0
                             }
                         }
-                    ) : nil
-
-                ) { selectedAnyItem in
-                    handler(selectedAnyItem)
-                }
+                    ) : nil,
+                    onSelection: { selectedAnyItem in
+                        handler(selectedAnyItem)
+                    }, onCancel: {
+                        selectedTool = nil
+                    }
+                )
             }
         }
         // If the user picks "Polygone" => show text-based polygon

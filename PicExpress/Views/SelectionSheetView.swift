@@ -43,11 +43,14 @@ public struct AnySelectionItem: SelectionItem {
 
 /// A generic view that displays a list of items conforming to `SelectionItem`.
 struct SelectionSheetView<T: SelectionItem>: View {
+    @Environment(AppState.self) private var appState
+
     let title: String
     let options: [T]
     let isPresented: Binding<Bool>
     let additionalCheckbox: Binding<Bool>?
     let onSelection: (T) -> Void
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
@@ -84,6 +87,7 @@ struct SelectionSheetView<T: SelectionItem>: View {
                 Spacer()
                 Button("Annuler") {
                     isPresented.wrappedValue = false
+                    onCancel()
                 }
                 .padding(.trailing)
             }
