@@ -90,15 +90,6 @@ struct ToolsPanelView: View {
             .cornerRadius(4)
 
             Toggle(isOn: Binding<Bool>(
-                get: { appState.pixelFillEnabled },
-                set: { appState.pixelFillEnabled = $0 }
-            )) {
-                Text("Mode pixel fill")
-            }
-            .toggleStyle(.checkbox)
-            .padding(.vertical, 4)
-
-            Toggle(isOn: Binding<Bool>(
                 get: { appState.fillPolygonBackground },
                 set: { appState.fillPolygonBackground = $0 }
             )) {
@@ -132,13 +123,27 @@ struct ToolsPanelView: View {
                 SelectionSheetView<AnySelectionItem>(
                     title: selectionTitle,
                     options: selectionOptions,
-                    isPresented: $showSelectionSheet
+                    isPresented: $showSelectionSheet,
+                    additionalCheckbox: (selectedTool?.name == "Remplissage") ? Binding<Bool>(
+                        get: {
+                            if let tool = selectedTool, tool.name == "Remplissage" {
+                                return appState.pixelFillEnabled
+                            }
+                            return false
+                        },
+                        set: {
+                            if let tool = selectedTool, tool.name == "Remplissage" {
+                                appState.pixelFillEnabled = $0
+                            }
+                        }
+                    ) : nil
+
                 ) { selectedAnyItem in
                     handler(selectedAnyItem)
                 }
             }
         }
-        // If the user picks "Polygone", we show a sheet
+        // If the user picks "Polygone" => show text-based polygon
         .sheet(isPresented: $showPolygonSheet) {
             PolygonToolView { points, color in
                 onPolygonPoints(points, color)
@@ -189,7 +194,7 @@ struct ToolsPanelView: View {
         case "Découpage":
             showSelectionSheet(
                 title: "Choisir l'algorithme de découpage",
-                options: PolygonClippingAlgorithm.allCases
+                options: [PolygonClippingAlgorithm.cyrusBeck, .sutherlandHodgman]
             ) { algo in
                 appState.selectedPolygonAlgorithm = algo
             }
@@ -202,15 +207,20 @@ struct ToolsPanelView: View {
                 appState.currentShapeType = shape
             }
 
+        case "Redimensionnement":
+            // No need to ask an algo => user just wants to move vertices
+            // We do nothing special here
+            print("Mode: Redimensionnement => user can drag the lassoPoints vertices now")
+
         default:
             break
         }
 
+        // Let the coordinator update (dis)able pan, etc.
         appState.mainCoordinator?.updatePanGestureEnabled()
     }
 
     /// Helper function to show the selection sheet with a typed array of T: SelectionItem.
-    /// We convert them into [AnySelectionItem] to store in `selectionOptions`.
     private func showSelectionSheet<T: SelectionItem>(
         title: String,
         options: [T],

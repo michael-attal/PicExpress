@@ -8,6 +8,8 @@
 import MetalKit
 import SwiftUI
 
+/// This struct is the NSViewRepresentable that displays a Metal view
+/// and uses a Coordinator to handle input events (mouse, gestures).
 struct MetalCanvasView: NSViewRepresentable {
     @Binding var zoom: CGFloat
     @Binding var panOffset: CGSize
@@ -36,6 +38,7 @@ struct MetalCanvasView: NSViewRepresentable {
         let docWidth = appState.selectedDocument?.width ?? 512
         let docHeight = appState.selectedDocument?.height ?? 512
 
+        // We create the main renderer
         let mr = MainMetalRenderer(mtkView: mtkView,
                                    showTriangle: showTriangle,
                                    width: docWidth,
@@ -43,10 +46,11 @@ struct MetalCanvasView: NSViewRepresentable {
                                    appState: appState)
         mtkView.delegate = mr
 
+        // Store references
         context.coordinator.mainRenderer = mr
         mtkView.coordinator = context.coordinator
 
-        // Store coordinator in appState now
+        // Also store them in appState
         DispatchQueue.main.async {
             self.appState.mainRenderer = mr
             self.appState.mainCoordinator = context.coordinator
@@ -56,14 +60,14 @@ struct MetalCanvasView: NSViewRepresentable {
         mtkView.enableSetNeedsDisplay = true
         mtkView.isPaused = false
 
-        // -- Pinch gesture
+        // Add pinch gesture
         let pinchGesture = NSMagnificationGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleMagnification(_:))
         )
         mtkView.addGestureRecognizer(pinchGesture)
 
-        // -- Pan gesture
+        // Add pan gesture
         let panGesture = NSPanGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handlePan(_:))
@@ -72,13 +76,14 @@ struct MetalCanvasView: NSViewRepresentable {
         context.coordinator.panGesture = panGesture
         context.coordinator.updatePanGestureEnabled()
 
+        // Make this view first responder so it can receive key events
         mtkView.window?.makeFirstResponder(mtkView)
 
         return mtkView
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // We update some rendering parameters
+        // Update transform, color, etc.
         context.coordinator.mainRenderer?.previewColor = appState.selectedColor.toSIMD4()
         context.coordinator.mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         context.coordinator.mainRenderer?.showTriangle(showTriangle)
@@ -103,10 +108,9 @@ struct MetalCanvasView: NSViewRepresentable {
         /// For "Polygone par clic"
         private var clickedPoints: [ECTPoint] = []
 
-        // For shape creation
+        // For "Formes" creation
         var shapeStart: NSPoint?
         var isDrawingShape: Bool = false
-
         // We store the shape preview in a points array
         private var shapePreviewPoints: [ECTPoint] = []
 
@@ -122,13 +126,16 @@ struct MetalCanvasView: NSViewRepresentable {
             self.appState = appState
         }
 
+        /// Enable or disable pan gesture according to the current tool
         @MainActor func updatePanGestureEnabled() {
             guard let panGesture = panGesture else { return }
             guard let tool = appState.selectedTool else {
                 panGesture.isEnabled = true
                 return
             }
-            if tool.name == "Formes" {
+            // We disable pan for "Formes", "Découpage", "Redimensionnement"
+            // because we want to avoid conflict with drag of points or shape drawing
+            if tool.name == "Formes" || tool.name == "Découpage" || tool.name == "Redimensionnement" {
                 panGesture.isEnabled = false
             } else {
                 panGesture.isEnabled = true
@@ -159,10 +166,9 @@ struct MetalCanvasView: NSViewRepresentable {
                 zoom = newZoom
 
                 // 4) anchor in screen after => worldPointToScreen
-                let anchorScreenAfter = worldPointToScreen(anchorWorld, in: view, zoom: newZoom, pan: panOffset)
-                // difference
-                let dx = anchorScreen.x - anchorScreenAfter.x
-                let dy = anchorScreen.y - anchorScreenAfter.y
+                let anchorAfter = worldPointToScreen(anchorWorld, in: view, zoom: newZoom, pan: panOffset)
+                let dx = anchorScreen.x - anchorAfter.x
+                let dy = anchorScreen.y - anchorAfter.y
 
                 let size = view.bounds.size
                 panOffset.width += dx / size.width
@@ -175,11 +181,12 @@ struct MetalCanvasView: NSViewRepresentable {
         // MARK: - Pan gesture
 
         @MainActor @objc func handlePan(_ sender: NSPanGestureRecognizer) {
-            // If we are in "Formes" mode, do nothing
-            if let tool = appState.selectedTool, tool.name == "Formes" {
+            // We do not do any pan if the tool is "Formes", "Découpage" or "Redimensionnement"
+            if let tool = appState.selectedTool,
+               tool.name == "Formes" || tool.name == "Découpage" || tool.name == "Redimensionnement"
+            {
                 return
             }
-
             let translation = sender.translation(in: sender.view)
             let size = sender.view?.bounds.size ?? .zero
             panOffset.width += translation.x / size.width
@@ -190,42 +197,41 @@ struct MetalCanvasView: NSViewRepresentable {
 
         // MARK: - Mouse events
 
-        @MainActor func mouseClicked(at nsPoint: NSPoint, in view: NSView) {
+        @MainActor func mouseClicked(at pt: NSPoint, in view: NSView) {
             guard let tool = appState.selectedTool else { return }
 
             switch tool.name {
             case "Polygone par clic":
-                // Collecting points
-                let wpt = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                // Collect points for a polygon
+                let wpt = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
                 clickedPoints.append(wpt)
                 mainRenderer?.pointsRenderer?.updatePreviewPoints(clickedPoints)
 
             case "Découpage":
-                // Accumulating lasso points
-                let wpt = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                // We add points to lassoPoints
+                let wpt = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
                 appState.lassoPoints.append(wpt)
                 mainRenderer?.pointsRenderer?.updatePreviewPoints(appState.lassoPoints)
-
-                // Signal the new window to the polygonRenderer
+                // Also set it as the clip window
                 mainRenderer?.setClipWindow(appState.lassoPoints)
 
             case "Remplissage":
                 if appState.pixelFillEnabled {
-                    fillTexturePixelByPixel(nsPoint, in: view)
+                    fillTexturePixelByPixel(pt, in: view)
                 } else {
-                    let wc = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                    let wc = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
                     fillPolygonIfClicked(worldCoords: wc)
                 }
 
             case "Formes":
-                shapeStart = nsPoint
+                // Start drawing a shape
+                shapeStart = pt
                 isDrawingShape = true
-                // Reset preview
                 shapePreviewPoints = []
                 mainRenderer?.pointsRenderer?.updatePreviewPoints([])
 
             case "Gomme":
-                let wc = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                let wc = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
                 erasePolygonIfClicked(worldCoords: wc)
 
             default:
@@ -233,45 +239,42 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        @MainActor func mouseUp(at nsPoint: NSPoint, in view: NSView) {
+        @MainActor func mouseUp(at pt: NSPoint, in view: NSView) {
             guard let tool = appState.selectedTool else { return }
             if tool.name == "Formes", isDrawingShape {
                 guard let start = shapeStart else { return }
-                let end = nsPoint
+                let end = pt
 
                 let wStart = screenPointToWorld(start, in: view, zoom: zoom, pan: panOffset)
                 let wEnd = screenPointToWorld(end, in: view, zoom: zoom, pan: panOffset)
 
                 if let shapeType = appState.currentShapeType {
-                    let shapePoints = createShapePolygon(shapeType: shapeType, start: wStart, end: wEnd)
-                    // Store it in the doc
+                    let shapePoints = createShapePolygon(shapeType, start: wStart, end: wEnd)
+                    // Store it
                     appState.storePolygonInDocument(shapePoints, color: appState.selectedColor)
-                    // And add it
                     let c = appState.selectedColor.toSIMD4()
                     mainRenderer?.addPolygon(points: shapePoints, color: c)
                 }
 
-                // Clear the preview
+                // clear preview
                 shapePreviewPoints = []
                 mainRenderer?.pointsRenderer?.updatePreviewPoints([])
-
                 shapeStart = nil
                 isDrawingShape = false
             }
         }
 
-        @MainActor func mouseDragged(at nsPoint: NSPoint, in view: NSView) {
+        @MainActor func mouseDragged(at pt: NSPoint, in view: NSView) {
             guard let tool = appState.selectedTool else { return }
             if tool.name == "Formes", isDrawingShape {
                 // Generate a live preview
                 guard let start = shapeStart else { return }
-
                 let wStart = screenPointToWorld(start, in: view, zoom: zoom, pan: panOffset)
-                let wCurrent = screenPointToWorld(nsPoint, in: view, zoom: zoom, pan: panOffset)
+                let wCurrent = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
 
                 if let shapeType = appState.currentShapeType {
-                    let shapePoints = createShapePolygon(shapeType: shapeType, start: wStart, end: wCurrent)
                     // Store in preview array
+                    let shapePoints = createShapePolygon(shapeType, start: wStart, end: wCurrent)
                     shapePreviewPoints = shapePoints
                     // Display them as points (not lines)
                     mainRenderer?.pointsRenderer?.updatePreviewPoints(shapePreviewPoints)
@@ -283,7 +286,7 @@ struct MetalCanvasView: NSViewRepresentable {
             return super.responds(to: aSelector)
         }
 
-        // MARK: - Key events
+        // MARK: - Keyboard events
 
         @MainActor func keyPressedEnter() {
             guard let tool = appState.selectedTool else { return }
@@ -313,9 +316,10 @@ struct MetalCanvasView: NSViewRepresentable {
 
         // MARK: - Lasso clipping
 
-        @MainActor private func performLassoClipping(_ lasso: [ECTPoint]) {
+        @MainActor func performLassoClipping(_ lasso: [ECTPoint]) {
             // 1) Recover polygons from the document
             guard let doc = appState.selectedDocument else { return }
+
             var storedPolygons = doc.loadAllPolygons()
             guard !storedPolygons.isEmpty else { return }
 
@@ -328,12 +332,17 @@ struct MetalCanvasView: NSViewRepresentable {
 
                 switch appState.selectedPolygonAlgorithm {
                 case .earClipping:
-                    // not really for clipping => leave as is
+                    // Not a real clipping => keep original - We should not go in that case since I removed it from the options selection of the sheet view when selecting the "Découpage" tool.
                     clippedPoints = originalPoints
+
                 case .cyrusBeck:
-                    clippedPoints = cyrusBeckClip(subjectPolygon: originalPoints, clipWindow: lasso)
+                    // handle concave window if needed
+                    clippedPoints = clipWithConcaveWindowIfNeeded(subjectPolygon: originalPoints,
+                                                                  window: lasso)
+
                 case .sutherlandHodgman:
-                    clippedPoints = sutherlandHodgmanClip(subjectPolygon: originalPoints, clipWindow: lasso)
+                    clippedPoints = clipWithConcaveWindowIfNeeded(subjectPolygon: originalPoints,
+                                                                  window: lasso)
                 }
 
                 if clippedPoints.count >= 3 {
@@ -342,11 +351,17 @@ struct MetalCanvasView: NSViewRepresentable {
                         color: sp.color
                     )
                     newPolys.append(newPoly)
+                } else {
+                    // If the polygon is completely outside => we re-add the original
+                    // so it is NOT removed. This is the "ignore the removal" approach.
+                    newPolys.append(sp)
                 }
             }
 
-            // 3) Save and redisplay
+            // Save newPolys
             doc.saveAllPolygons(newPolys)
+
+            // Clear & redraw
             mainRenderer?.clearPolygons()
             for p in newPolys {
                 let epts = p.points.map { ECTPoint(x: $0.x, y: $0.y) }
@@ -355,7 +370,7 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        // MARK: - Scroll wheel => zoom
+        // MARK: - Scroll => Zoom
 
         func handleScrollWheel(_ event: NSEvent) {
             guard let view = event.window?.contentView else { return }
@@ -372,9 +387,9 @@ struct MetalCanvasView: NSViewRepresentable {
                 newZoom = max(minZ, min(newZoom, maxZ))
                 zoom = newZoom
 
-                let anchorScreenAfter = worldPointToScreen(anchorWorld, in: mtkView, zoom: newZoom, pan: panOffset)
-                let dx = localPoint.x - anchorScreenAfter.x
-                let dy = localPoint.y - anchorScreenAfter.y
+                let anchorAfter = worldPointToScreen(anchorWorld, in: mtkView, zoom: newZoom, pan: panOffset)
+                let dx = localPoint.x - anchorAfter.x
+                let dy = localPoint.y - anchorAfter.y
 
                 let size = mtkView.bounds.size
                 panOffset.width += dx / size.width
@@ -384,7 +399,7 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        // MARK: - fill polygon
+        // MARK: - fill polygon if clicked
 
         @MainActor private func fillPolygonIfClicked(worldCoords: ECTPoint) {
             guard let doc = appState.selectedDocument else { return }
@@ -463,7 +478,7 @@ struct MetalCanvasView: NSViewRepresentable {
                         return
                     }
                 }
-                print("No polygon found at that point => no gpu fill.")
+                print("No polygon found => no gpu fill.")
                 return
             }
 
@@ -472,7 +487,6 @@ struct MetalCanvasView: NSViewRepresentable {
                          bytesPerRow: tex.width*4,
                          from: MTLRegionMake2D(0, 0, tex.width, tex.height),
                          mipmapLevel: 0)
-
             FillAlgorithms.fillPixels(
                 buffer: &buf,
                 width: tex.width,
@@ -483,12 +497,10 @@ struct MetalCanvasView: NSViewRepresentable {
                 fillColor: appState.selectedColor,
                 polygons: appState.selectedDocument?.loadAllPolygons()
             )
-
             tex.replace(region: MTLRegionMake2D(0, 0, tex.width, tex.height),
                         mipmapLevel: 0,
                         withBytes: &buf,
                         bytesPerRow: tex.width*4)
-
             mr.cpuBuffer = buf
         }
 
@@ -505,7 +517,7 @@ struct MetalCanvasView: NSViewRepresentable {
                 let xj = polygon[j].x
                 let yj = polygon[j].y
 
-                let intersect = ((yi>y) != (yj>y)) &&
+                let intersect = ((yi > y) != (yj > y)) &&
                     (x < (xj - xi)*(y - yi) / (yj - yi) + xi)
                 if intersect { inside.toggle() }
                 j = i
@@ -563,7 +575,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
         // MARK: - Shape generation
 
-        private func createShapePolygon(shapeType: ShapeType,
+        private func createShapePolygon(_ shapeType: ShapeType,
                                         start: ECTPoint,
                                         end: ECTPoint) -> [ECTPoint]
         {
@@ -615,7 +627,11 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        private func approximateEllipse(center: ECTPoint, rx: Double, ry: Double, segments: Int) -> [ECTPoint] {
+        private func approximateEllipse(center: ECTPoint,
+                                        rx: Double,
+                                        ry: Double,
+                                        segments: Int) -> [ECTPoint]
+        {
             var pts: [ECTPoint] = []
             let twoPi = 2.0*Double.pi
             for i in 0..<segments {
@@ -626,10 +642,24 @@ struct MetalCanvasView: NSViewRepresentable {
             }
             return pts
         }
+
+        @MainActor func clipWithConcaveWindowIfNeeded(subjectPolygon: [ECTPoint],
+                                                      window: [ECTPoint]) -> [ECTPoint]
+        {
+            let clipped = clipWithConcaveWindow(subjectPolygon: subjectPolygon,
+                                                windowPolygon: window,
+                                                algo: appState.selectedPolygonAlgorithm)
+            return clipped
+        }
     }
+
+    // MARK: - The actual NSView (subclass)
 
     class ZoomableMTKView: MTKView {
         weak var coordinator: Coordinator?
+
+        private var draggedVertexIndex: Int? = nil
+        private let vertexHitThreshold: CGFloat = 10.0
 
         override func scrollWheel(with event: NSEvent) {
             coordinator?.handleScrollWheel(event)
@@ -637,17 +667,58 @@ struct MetalCanvasView: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             let loc = convert(event.locationInWindow, from: nil)
+
+            // If the tool is "Redimensionnement", let's try to drag a vertex
+            if let tool = coordinator?.appState.selectedTool,
+               tool.name == "Redimensionnement"
+            {
+                let points = coordinator?.appState.lassoPoints ?? []
+                for (i, wpt) in points.enumerated() {
+                    if let sp = coordinator?.worldPointToScreen(wpt, in: self,
+                                                                zoom: coordinator?.zoom ?? 1.0,
+                                                                pan: coordinator?.panOffset ?? .zero)
+                    {
+                        let dx = sp.x - loc.x
+                        let dy = sp.y - loc.y
+                        let dist = sqrt(dx*dx + dy*dy)
+                        if dist < vertexHitThreshold {
+                            draggedVertexIndex = i
+                            return
+                        }
+                    }
+                }
+            }
+
+            // Otherwise => normal
             coordinator?.mouseClicked(at: loc, in: self)
         }
 
         override func mouseDragged(with event: NSEvent) {
             super.mouseDragged(with: event)
             let loc = convert(event.locationInWindow, from: nil)
-            coordinator?.mouseDragged(at: loc, in: self)
+
+            // If we are dragging a vertex => update the position
+            if let idx = draggedVertexIndex {
+                let wpt = coordinator?.screenPointToWorld(loc, in: self,
+                                                          zoom: coordinator?.zoom ?? 1.0,
+                                                          pan: coordinator?.panOffset ?? .zero)
+                if let newPt = wpt {
+                    coordinator?.appState.lassoPoints[idx] = newPt
+                    // Re-run the clipping => but re-add original if outside
+                    coordinator?.performLassoClipping(coordinator?.appState.lassoPoints ?? [])
+
+                    coordinator?.mainRenderer?.setClipWindow(coordinator?.appState.lassoPoints ?? [])
+                    setNeedsDisplay(bounds)
+                }
+            } else {
+                // normal logic
+                coordinator?.mouseDragged(at: loc, in: self)
+            }
         }
 
         override func mouseUp(with event: NSEvent) {
             super.mouseUp(with: event)
+            draggedVertexIndex = nil
             let loc = convert(event.locationInWindow, from: nil)
             coordinator?.mouseUp(at: loc, in: self)
         }

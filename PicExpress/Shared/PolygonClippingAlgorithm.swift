@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import simd
 
 /// Enumeration of polygon clipping/triangulation algorithms
 public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem {
@@ -25,6 +24,101 @@ public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendab
     public var description: String { rawValue }
 }
 
+/// This function checks if a polygon is likely concave by scanning consecutive edges sign
+/// We do a quick test: if we find any sign mismatch in cross products, it's concave.
+private func polygonIsConcave(_ pts: [ECTPoint]) -> Bool {
+    if pts.count < 4 { return false }
+    var sign = 0
+    let n = pts.count
+    for i in 0 ..< n {
+        let i1 = (i + 1) % n
+        let i2 = (i + 2) % n
+        let v1 = pts[i1] - pts[i]
+        let v2 = pts[i2] - pts[i1]
+        let crossZ = v1.x*v2.y - v1.y*v2.x
+        let s = (crossZ > 0) ? 1 : ((crossZ < 0) ? -1 : 0)
+        if s != 0 {
+            if sign == 0 {
+                sign = s
+            } else if s != sign {
+                return true // we found a mismatch => concave
+            }
+        }
+    }
+    return false
+}
+
+/// Subdivide a polygon (potentially concave) into triangles using ear clipping.
+func subdivideWindowIntoTriangles(windowPoints: [ECTPoint]) -> [[ECTPoint]] {
+    let earClipper = EarClippingTriangulation()
+    let polygon = ECTPolygon(vertices: windowPoints)
+    let triList = earClipper.getEarClipTriangles(polygon: polygon)
+    var results: [[ECTPoint]] = []
+    for tri in triList {
+        results.append([tri.a, tri.b, tri.c])
+    }
+    return results
+}
+
+/**
+ This function clips `subjectPolygon` by a (possibly concave) `windowPolygon`.
+ We subdivide the window into triangles if it's concave, then we clip the subject
+ polygon by each triangle separately, then combine the results.
+
+ For the actual "clip" step, we choose between cyrusBeckClip(...) or sutherlandHodgmanClip(...).
+
+ For combining partial results, we do a naive "append" approach.
+ If you want a proper union polygon, you'd do more geometry, but let's keep it simple here.
+ */
+public func clipWithConcaveWindow(
+    subjectPolygon: [ECTPoint],
+    windowPolygon: [ECTPoint],
+    algo: PolygonClippingAlgorithm
+) -> [ECTPoint] {
+    guard windowPolygon.count >= 3 else {
+        return []
+    }
+
+    let isConcave = polygonIsConcave(windowPolygon)
+
+    // If not concave, we can just do normal cyrus or sutherland on the entire window
+    if !isConcave {
+        switch algo {
+        case .cyrusBeck:
+            return cyrusBeckClip(subjectPolygon: subjectPolygon, clipWindow: windowPolygon)
+        case .sutherlandHodgman:
+            return sutherlandHodgmanClip(subjectPolygon: subjectPolygon, clipWindow: windowPolygon)
+        case .earClipping:
+            // Not typically used for clipping in that sense, but let's just return the original
+            return subjectPolygon
+        }
+    }
+
+    // If it is concave => subdiv into triangles
+    let subTriangles = subdivideWindowIntoTriangles(windowPoints: windowPolygon)
+    var combined: [[ECTPoint]] = []
+
+    for tri in subTriangles {
+        var partial: [ECTPoint] = []
+        switch algo {
+        case .cyrusBeck:
+            partial = cyrusBeckClip(subjectPolygon: subjectPolygon, clipWindow: tri)
+        case .sutherlandHodgman:
+            partial = sutherlandHodgmanClip(subjectPolygon: subjectPolygon, clipWindow: tri)
+        case .earClipping:
+            partial = subjectPolygon
+        }
+        if partial.count >= 3 {
+            combined.append(partial)
+        }
+    }
+
+    // Flatten them into a single list. (Not a real union, just appended.)
+    let result = combined.flatMap { $0 }
+    return result
+}
+
+/// Sutherland-Hodgman
 public func sutherlandHodgmanClip(
     subjectPolygon: [ECTPoint],
     clipWindow: [ECTPoint]
@@ -115,6 +209,7 @@ private func computeIntersectionSH(
     return ECTPoint(x: px, y: py)
 }
 
+/// Cyrus-Beck
 public func cyrusBeckClip(
     subjectPolygon: [ECTPoint],
     clipWindow: [ECTPoint]
@@ -151,9 +246,9 @@ public func cyrusBeckClip(
                 if inside1, inside2 {
                     outputList.append(clipP2)
                 } else if inside1, !inside2 {
-                    // in->out => pas de p2
+                    // in->out => no clipP2
                 } else if !inside1, inside2 {
-                    // out->in => ajoute clipP1 + clipP2
+                    // out->in => add clipP1 + clipP2
                     outputList.append(clipP1)
                     outputList.append(clipP2)
                 }
@@ -183,31 +278,33 @@ private func cyrusBeckSegmentClip(
     var tinf = 0.0
     var tsup = 1.0
 
-    let edge = clipB - clipA
-    let nx = -edge.y
-    let ny = edge.x
+    // We'll compute intersection param if needed
+    let nx = -(clipB.y - clipA.y)
+    let ny = (clipB.x - clipA.x)
 
     let denom = d.x*nx + d.y*ny
-    let num = (clipA.x - p1.x)*nx + (clipA.y - p1.y)*ny
+    let w = ECTPoint(x: p1.x - clipA.x, y: p1.y - clipA.y)
+    let num = w.x*nx + w.y*ny
 
+    // If denom ~ 0 => parallel
     if abs(denom) < 1e-12 {
-        // segment // bord
         if num < 0 {
             return nil
         } else {
+            // entire line => pass
             return (p1, p2)
         }
     }
 
-    let tIntersect = num / denom
+    let t = -num / denom
 
     if denom > 0 {
-        if tIntersect > tinf {
-            tinf = tIntersect
+        if t > tinf {
+            tinf = t
         }
     } else {
-        if tIntersect < tsup {
-            tsup = tIntersect
+        if t < tsup {
+            tsup = t
         }
     }
 

@@ -46,6 +46,7 @@ struct SelectionSheetView<T: SelectionItem>: View {
     let title: String
     let options: [T]
     let isPresented: Binding<Bool>
+    let additionalCheckbox: Binding<Bool>?
     let onSelection: (T) -> Void
 
     var body: some View {
@@ -69,6 +70,14 @@ struct SelectionSheetView<T: SelectionItem>: View {
                     }
                 }
                 .padding(.horizontal, 50)
+            }
+
+            if additionalCheckbox != nil && title == "Choisir l'algorithme de remplissage" {
+                Toggle(isOn: additionalCheckbox!) {
+                    Text("Mode pixel fill")
+                }
+                .toggleStyle(.checkbox)
+                .padding(.vertical, 4)
             }
 
             HStack {
