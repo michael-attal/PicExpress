@@ -115,6 +115,22 @@ struct ToolsPanelView: View {
                 .background(selectedTool == tool ? Color.blue.opacity(0.2) : Color.clear)
                 .cornerRadius(4)
             }
+
+            Button(action: {
+                let panel = NSSavePanel()
+                panel.allowedFileTypes = ["png"]
+                panel.nameFieldStringValue = appState.selectedDocument?.name != nil ? "\(appState.selectedDocument!.name).png" : "Untitled.png"
+                panel.begin { result in
+                    if result == .OK, let url = panel.url, let mtkView = appState.mainCoordinator?.mtkView {
+                        mtkView.exportToPNG(saveURL: url)
+                    }
+                }
+            }) {
+                HStack {
+                    Label("Exporter en PNG", systemImage: "square.and.arrow.up")
+                }
+                .frame(maxWidth: .infinity)
+            }.frame(maxWidth: .infinity).cornerRadius(4)
         }
         .padding(.horizontal)
         // Generic selection sheet

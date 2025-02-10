@@ -33,7 +33,8 @@ struct MetalCanvasView: NSViewRepresentable {
             fatalError("Metal not supported.")
         }
         let mtkView = ZoomableMTKView(frame: .zero, device: device)
-
+        mtkView.framebufferOnly = false
+        
         // doc size
         let docWidth = appState.selectedDocument?.width ?? 512
         let docHeight = appState.selectedDocument?.height ?? 512
@@ -47,6 +48,7 @@ struct MetalCanvasView: NSViewRepresentable {
         mtkView.delegate = mr
 
         // Store references
+        context.coordinator.mtkView = mtkView
         context.coordinator.mainRenderer = mr
         mtkView.coordinator = context.coordinator
 
@@ -102,6 +104,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
         let appState: AppState
         var mainRenderer: MainMetalRenderer?
+        weak var mtkView: MTKView?
 
         var panGesture: NSPanGestureRecognizer?
 
