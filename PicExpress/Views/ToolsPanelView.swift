@@ -188,7 +188,7 @@ struct ToolsPanelView: View {
         case "Remplissage":
             showSelectionSheet(
                 title: "Choisir l'algorithme de remplissage",
-                options: FillAlgorithm.allCases
+                options: [FillAlgorithm.seedRecursive, .seedStack, .scanline, .lca]
             ) { algo in
                 appState.fillAlgorithm = algo
             }

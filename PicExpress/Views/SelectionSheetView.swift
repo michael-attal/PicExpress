@@ -65,7 +65,7 @@ struct SelectionSheetView<T: SelectionItem>: View {
                             onSelection(option)
                             isPresented.wrappedValue = false
                         }) {
-                            Text(option.description)
+                            Text(option.description.capitalized)
                                 .frame(maxWidth: .infinity)
                                 .padding(8)
                                 .cornerRadius(8)
@@ -75,13 +75,13 @@ struct SelectionSheetView<T: SelectionItem>: View {
                 .padding(.horizontal, 50)
             }
 
-            if additionalCheckbox != nil && title == "Choisir l'algorithme de remplissage" {
-                Toggle(isOn: additionalCheckbox!) {
-                    Text("Mode pixel fill")
-                }
-                .toggleStyle(.checkbox)
-                .padding(.vertical, 4)
-            }
+            // if additionalCheckbox != nil && title == "Choisir l'algorithme de remplissage" {
+            //     Toggle(isOn: additionalCheckbox!) {
+            //         Text("Mode pixel fill")
+            //     }
+            //     .toggleStyle(.checkbox)
+            //     .padding(.vertical, 4)
+            // }
 
             HStack {
                 Spacer()
