@@ -114,6 +114,10 @@ struct MetalCanvasView: NSViewRepresentable {
         // We store the shape preview in a points array
         private var shapePreviewPoints: [ECTPoint] = []
 
+        // We track which polygon / vertex we are dragging
+        private var draggedPolygonIndex: Int?
+        private var draggedVertexIndex: Int?
+
         init(
             zoom: Binding<CGFloat>,
             panOffset: Binding<CGSize>,
@@ -234,6 +238,41 @@ struct MetalCanvasView: NSViewRepresentable {
                 let wc = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
                 erasePolygonIfClicked(worldCoords: wc)
 
+            case "Redimensionnement":
+                // Click on a vertex of one of the polygons
+                guard let doc = appState.selectedDocument else { return }
+                let polygons = doc.loadAllPolygons()
+                if polygons.isEmpty { return }
+
+                let clickWorld = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
+
+                // Find the polygon and the vertex closest to the click.
+                var bestDist = Double.greatestFiniteMagnitude
+                var bestPoly = -1
+                var bestVertex = -1
+
+                for (polyIndex, sp) in polygons.enumerated() {
+                    for (vIndex, v) in sp.points.enumerated() {
+                        let dx = clickWorld.x - v.x
+                        let dy = clickWorld.y - v.y
+                        let dist = sqrt(dx*dx + dy*dy)
+                        if dist < bestDist {
+                            bestDist = dist
+                            bestPoly = polyIndex
+                            bestVertex = vIndex
+                        }
+                    }
+                }
+
+                // If the distance is reasonable (e.g. < 0.05 pixels in world coordinates)
+                if bestDist < 0.05, bestPoly >= 0, bestVertex >= 0 {
+                    draggedPolygonIndex = bestPoly
+                    draggedVertexIndex = bestVertex
+                } else {
+                    draggedPolygonIndex = nil
+                    draggedVertexIndex = nil
+                }
+
             default:
                 break
             }
@@ -262,10 +301,17 @@ struct MetalCanvasView: NSViewRepresentable {
                 shapeStart = nil
                 isDrawingShape = false
             }
+
+            // When release the mouse, stop dragging.
+            if tool.name == "Redimensionnement" {
+                draggedPolygonIndex = nil
+                draggedVertexIndex = nil
+            }
         }
 
         @MainActor func mouseDragged(at pt: NSPoint, in view: NSView) {
             guard let tool = appState.selectedTool else { return }
+
             if tool.name == "Formes", isDrawingShape {
                 // Generate a live preview
                 guard let start = shapeStart else { return }
@@ -278,6 +324,35 @@ struct MetalCanvasView: NSViewRepresentable {
                     shapePreviewPoints = shapePoints
                     // Display them as points (not lines)
                     mainRenderer?.pointsRenderer?.updatePreviewPoints(shapePreviewPoints)
+                }
+            } else if tool.name == "Redimensionnement" {
+                // If we are dragging a vertex of a polygon
+                guard let dp = draggedPolygonIndex, let dv = draggedVertexIndex else {
+                    return
+                }
+                guard let doc = appState.selectedDocument else { return }
+
+                var polygons = doc.loadAllPolygons()
+                if dp < 0 || dp >= polygons.count { return }
+                var sp = polygons[dp]
+
+                // Change the vertex coordinate
+                let wpt = screenPointToWorld(pt, in: view, zoom: zoom, pan: panOffset)
+                var points = sp.points
+                if dv >= 0 && dv < points.count {
+                    points[dv] = Point2D(x: wpt.x, y: wpt.y)
+                    sp = StoredPolygon(points: points, color: sp.color)
+                    polygons[dp] = sp
+                    // Save doc
+                    doc.saveAllPolygons(polygons)
+
+                    // Redraw everything
+                    mainRenderer?.clearPolygons()
+                    for p in polygons {
+                        let epts = p.points.map { ECTPoint(x: $0.x, y: $0.y) }
+                        let c = SIMD4<Float>(p.color[0], p.color[1], p.color[2], p.color[3])
+                        mainRenderer?.addPolygon(points: epts, color: c)
+                    }
                 }
             }
         }
@@ -338,11 +413,13 @@ struct MetalCanvasView: NSViewRepresentable {
                 case .cyrusBeck:
                     // handle concave window if needed
                     clippedPoints = clipWithConcaveWindowIfNeeded(subjectPolygon: originalPoints,
-                                                                  window: lasso)
+                                                                  window: lasso,
+                                                                  algo: .cyrusBeck)
 
                 case .sutherlandHodgman:
                     clippedPoints = clipWithConcaveWindowIfNeeded(subjectPolygon: originalPoints,
-                                                                  window: lasso)
+                                                                  window: lasso,
+                                                                  algo: .sutherlandHodgman)
                 }
 
                 if clippedPoints.count >= 3 {
@@ -352,8 +429,7 @@ struct MetalCanvasView: NSViewRepresentable {
                     )
                     newPolys.append(newPoly)
                 } else {
-                    // If the polygon is completely outside => we re-add the original
-                    // so it is NOT removed. This is the "ignore the removal" approach.
+                    // If the polygon is completely outside => re-add the original
                     newPolys.append(sp)
                 }
             }
@@ -644,11 +720,12 @@ struct MetalCanvasView: NSViewRepresentable {
         }
 
         @MainActor func clipWithConcaveWindowIfNeeded(subjectPolygon: [ECTPoint],
-                                                      window: [ECTPoint]) -> [ECTPoint]
+                                                      window: [ECTPoint],
+                                                      algo: PolygonClippingAlgorithm) -> [ECTPoint]
         {
             let clipped = clipWithConcaveWindow(subjectPolygon: subjectPolygon,
                                                 windowPolygon: window,
-                                                algo: appState.selectedPolygonAlgorithm)
+                                                algo: algo)
             return clipped
         }
     }
@@ -658,9 +735,6 @@ struct MetalCanvasView: NSViewRepresentable {
     class ZoomableMTKView: MTKView {
         weak var coordinator: Coordinator?
 
-        private var draggedVertexIndex: Int? = nil
-        private let vertexHitThreshold: CGFloat = 10.0
-
         override func scrollWheel(with event: NSEvent) {
             coordinator?.handleScrollWheel(event)
         }
@@ -668,28 +742,7 @@ struct MetalCanvasView: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             let loc = convert(event.locationInWindow, from: nil)
 
-            // If the tool is "Redimensionnement", let's try to drag a vertex
-            if let tool = coordinator?.appState.selectedTool,
-               tool.name == "Redimensionnement"
-            {
-                let points = coordinator?.appState.lassoPoints ?? []
-                for (i, wpt) in points.enumerated() {
-                    if let sp = coordinator?.worldPointToScreen(wpt, in: self,
-                                                                zoom: coordinator?.zoom ?? 1.0,
-                                                                pan: coordinator?.panOffset ?? .zero)
-                    {
-                        let dx = sp.x - loc.x
-                        let dy = sp.y - loc.y
-                        let dist = sqrt(dx*dx + dy*dy)
-                        if dist < vertexHitThreshold {
-                            draggedVertexIndex = i
-                            return
-                        }
-                    }
-                }
-            }
-
-            // Otherwise => normal
+            // Delegate to the coordinator
             coordinator?.mouseClicked(at: loc, in: self)
         }
 
@@ -697,28 +750,11 @@ struct MetalCanvasView: NSViewRepresentable {
             super.mouseDragged(with: event)
             let loc = convert(event.locationInWindow, from: nil)
 
-            // If we are dragging a vertex => update the position
-            if let idx = draggedVertexIndex {
-                let wpt = coordinator?.screenPointToWorld(loc, in: self,
-                                                          zoom: coordinator?.zoom ?? 1.0,
-                                                          pan: coordinator?.panOffset ?? .zero)
-                if let newPt = wpt {
-                    coordinator?.appState.lassoPoints[idx] = newPt
-                    // Re-run the clipping => but re-add original if outside
-                    coordinator?.performLassoClipping(coordinator?.appState.lassoPoints ?? [])
-
-                    coordinator?.mainRenderer?.setClipWindow(coordinator?.appState.lassoPoints ?? [])
-                    setNeedsDisplay(bounds)
-                }
-            } else {
-                // normal logic
-                coordinator?.mouseDragged(at: loc, in: self)
-            }
+            coordinator?.mouseDragged(at: loc, in: self)
         }
 
         override func mouseUp(with event: NSEvent) {
             super.mouseUp(with: event)
-            draggedVertexIndex = nil
             let loc = convert(event.locationInWindow, from: nil)
             coordinator?.mouseUp(at: loc, in: self)
         }

@@ -39,6 +39,10 @@ struct EditingContentView: View {
                 Text("Cliquez sur au moins trois points pour créer une forme. Appuyez sur Entrée pour valider.")
                     .padding(8)
                     .foregroundColor(.yellow)
+            } else if appState.selectedTool?.name == "Redimensionnement" {
+                Text("Cliquez sur un sommet existant pour le déplacer. Faites un glisser (drag) pour modifier le polygone.")
+                    .padding(8)
+                    .foregroundColor(.yellow)
             }
 
             // --- Metal canvas zone ---
