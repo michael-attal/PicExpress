@@ -37,20 +37,23 @@ import SwiftUI
     /// The fill algorithm chosen by the user (seed recursive, seed stack, scanline, LCA)
     var fillAlgorithm: FillAlgorithm = .seedRecursive
 
-    /// If true, we do a pixel-based fill in a texture. If false, we simply recolor the polygon
-    var pixelFillEnabled: Bool = false
-
-    // Should we fill polygon interiors with color or only draw outlines
+    /// Should we fill polygon interiors with color or only draw outlines
     var fillPolygonBackground: Bool = true
 
-    // Which polygon clipping or triangulation algorithm to use
-    var selectedPolygonAlgorithm: PolygonClippingAlgorithm = .earClipping
+    /// Which polygon clipping algorithm to use
+    var selectedPolygonAlgorithm: PolygonClippingAlgorithm = .sutherlandHodgman
 
-    // When user picks the "Découpage" tool, we store the points of the freehand or clicked polygon:
+    /// Which polygon triangulation algorithm to use
+    var selectedPolygonTriangulationAlgorithm: PolygonTriangulationAlgorithm = .earClipping
+
+    /// When user picks the "Découpage" tool, we store the points of the freehand or clicked polygon:
     var lassoPoints: [ECTPoint] = []
 
-    // For the shape tool, we store the current shape type if the user chooses "Formes".
+    /// For the shape tool, we store the current shape type if the user chooses "Formes".
     var currentShapeType: ShapeType? = nil
+
+    // The fill rule => evenOdd (pair-impair) or winding (enroulement)
+    var fillRule: FillRule = .evenOdd
 
     /// Stores the given polygon in the current selectedDocument, then displays it immediately.
     func storePolygonInDocument(_ points: [ECTPoint], color: Color) {
@@ -75,7 +78,13 @@ import SwiftUI
         // 2) Build a new StoredPolygon
         let points2D = points.map { Point2D(x: $0.x, y: $0.y) }
         let colorArray = [Float(red), Float(green), Float(blue), Float(alpha)]
-        let newPoly = StoredPolygon(points: points2D, color: colorArray)
+        let newPoly = StoredPolygon(
+            points: points2D,
+            color: colorArray,
+            polygonTextureData: nil,
+            textureWidth: nil,
+            textureHeight: nil
+        )
 
         // 3) Append and save
         existingPolygons.append(newPoly)

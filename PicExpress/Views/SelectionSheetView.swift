@@ -48,7 +48,6 @@ struct SelectionSheetView<T: SelectionItem>: View {
     let title: String
     let options: [T]
     let isPresented: Binding<Bool>
-    let additionalCheckbox: Binding<Bool>?
     let onSelection: (T) -> Void
     let onCancel: () -> Void
 
@@ -75,13 +74,19 @@ struct SelectionSheetView<T: SelectionItem>: View {
                 .padding(.horizontal, 50)
             }
 
-            // if additionalCheckbox != nil && title == "Choisir l'algorithme de remplissage" {
-            //     Toggle(isOn: additionalCheckbox!) {
-            //         Text("Mode pixel fill")
-            //     }
-            //     .toggleStyle(.checkbox)
-            //     .padding(.vertical, 4)
-            // }
+            if title == "Choisir l'algorithme de remplissage" {
+                VStack(spacing: 10) {
+                    Text("Règle de remplissage :")
+                    Picker("Règle de remplissage :", selection: Binding<FillRule>(
+                        get: { appState.fillRule },
+                        set: { appState.fillRule = $0 }
+                    )) {
+                        ForEach(FillRule.allCases, id: \.self) { fillRule in
+                            Text(fillRule.rawValue)
+                        }
+                    }.frame(maxWidth: 350)
+                }
+            }
 
             HStack {
                 Spacer()

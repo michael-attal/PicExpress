@@ -22,7 +22,7 @@ It was originally developed as a **Math course project** on geometric algorithms
 
 • **LCA** (Active Edge Table).
 
-• **Eraser, resizing, pre-shaping**... tools.
+• **Eraser, resizing, pre-shaping, export**... tools.
 
 • **Modern SwiftUI/Metal Interface**:
 
@@ -39,6 +39,7 @@ It was originally developed as a **Math course project** on geometric algorithms
 3. **Choose** a clipping or filling algorithm in the side panel.
 4. **Apply** the operation (e.g., draw or adjust a window polygon, then press Enter) to see the resulting clipped/filled shape.
 5. **Pan/Zoom** to inspect details.
+6. **Export** your masterpiece and show it off! 🚀
 
 That’s it! You can experiment with different polygons, windows, and filling techniques.
 

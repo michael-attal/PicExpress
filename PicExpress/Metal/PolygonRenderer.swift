@@ -1,5 +1,5 @@
 //
-//  PolygonRenderer.metal
+//  PolygonRenderer.swift
 //  PicExpress
 //
 //  Created by Michaël ATTAL on 10/01/2025.
@@ -8,9 +8,11 @@
 import MetalKit
 import simd
 
-/// Each polygon we store for rendering
+/// Each polygon we store for rendering.
+/// If 'usesTexture' is true, we sample from 'texture' in fs_polygon_textured.
+/// Otherwise, we use the color from the vertex in fs_polygon.
 struct PolygonVertex {
-    var position: SIMD2<Float>
+    var position: SIMD2<Float> // in pixel coords
     var uv: SIMD2<Float>
     var color: SIMD4<Float>
 }
@@ -19,18 +21,27 @@ struct PolygonData {
     var vertexBuffer: MTLBuffer
     var indexBuffer: MTLBuffer
     var indexCount: Int
+
+    var texture: MTLTexture? // if we are using a texture
+    var usesTexture: Bool // if true => sample from texture
 }
 
+/// This renderer is responsible for drawing multiple polygons.
+/// Some polygons might be solid-color, some might be textured.
 final class PolygonRenderer {
     private let device: MTLDevice
-    private var pipelineState: MTLRenderPipelineState?
 
-    // Multiple polygons can be stored (each with its own geometry)
-    private(set) var polygons: [PolygonData] = []
+    /// Two pipeline states: one for color-only polygons, one for textured polygons
+    private var pipelineStateColor: MTLRenderPipelineState?
+    private var pipelineStateTexture: MTLRenderPipelineState?
 
-    /// Access to the global appState to check fill mode, polygon algorithm, etc.
+    /// A reference to the global appState if needed
     private weak var appState: AppState?
 
+    /// The local storage of polygons that we will draw.
+    public var polygons: [PolygonData] = []
+
+    /// We can keep a clipWindow if we do polygon clipping in the GPU or else
     private var clipWindow: [ECTPoint] = []
 
     init(device: MTLDevice, library: MTLLibrary?, appState: AppState?) {
@@ -39,132 +50,235 @@ final class PolygonRenderer {
         buildPipeline(library: library)
     }
 
+    /// Build two pipeline states:
+    /// - pipelineStateColor => vs_polygon + fs_polygon
+    /// - pipelineStateTexture => vs_polygon + fs_polygon_textured
     private func buildPipeline(library: MTLLibrary?) {
         guard let library = library else { return }
+
+        // 1) Pipeline for color
         let vertexFunc = library.makeFunction(name: "vs_polygon")
         let fragmentFunc = library.makeFunction(name: "fs_polygon")
 
-        let desc = MTLRenderPipelineDescriptor()
-        desc.vertexFunction = vertexFunc
-        desc.fragmentFunction = fragmentFunc
-        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        let descColor = MTLRenderPipelineDescriptor()
+        descColor.vertexFunction = vertexFunc
+        descColor.fragmentFunction = fragmentFunc
+        descColor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
         do {
-            pipelineState = try device.makeRenderPipelineState(descriptor: desc)
+            pipelineStateColor = try device.makeRenderPipelineState(descriptor: descColor)
         } catch {
-            print("PolygonRenderer: failed to create pipeline state:", error)
+            print("PolygonRenderer: failed to create pipelineStateColor =>", error)
+        }
+
+        // 2) Pipeline for texture
+        let vertexFuncTex = library.makeFunction(name: "vs_polygon")
+        let fragmentFuncTex = library.makeFunction(name: "fs_polygon_textured")
+
+        let descTex = MTLRenderPipelineDescriptor()
+        descTex.vertexFunction = vertexFuncTex
+        descTex.fragmentFunction = fragmentFuncTex
+        descTex.colorAttachments[0].pixelFormat = .bgra8Unorm
+
+        do {
+            pipelineStateTexture = try device.makeRenderPipelineState(descriptor: descTex)
+        } catch {
+            print("PolygonRenderer: failed to create pipelineStateTexture =>", error)
         }
     }
 
-    // MARK: - Public API
-
-    /// Optionnel: un setter pour la fenêtre de clipping
+    /// If we need a "clip window" for dynamic clipping
     func setClipWindow(_ points: [ECTPoint]) {
         clipWindow = points
         print("PolygonRenderer: clipWindow updated with \(points.count) points.")
     }
 
-    /// Adds a polygon. color => the polygon's unique color
-    @MainActor func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
+    /// Adds a new polygon into our internal list, optionally skipping the built-in ear clipping if the polygon is already triangulated.
+    /// - Parameters:
+    ///   - points: The polygon's vertex coordinates in our document space (pixel coords).
+    ///   - color: The polygon color (SIMD4<Float> = RGBA).
+    ///   - alreadyTriangulated: If `true`, we assume `points` is a flat list of triangles (3 vertices per triangle). No ear clipping is applied.
+    @MainActor
+    func addPolygon(points: [ECTPoint],
+                    color: SIMD4<Float>,
+                    alreadyTriangulated: Bool = false)
+    {
         guard let appState = appState else { return }
 
-        // 1) Selon l'algo choisi
+        // 1) Optionally apply polygon clipping with the current "clipWindow" (if not already triangulated)
         var finalPoints = points
-
         switch appState.selectedPolygonAlgorithm {
-        case .earClipping:
-            // pas de clipping => triangulation direct
-            break
-
         case .cyrusBeck:
-            finalPoints = clipPolygonWithCyrusBeck(finalPoints)
-
+            if !clipWindow.isEmpty, !alreadyTriangulated {
+                finalPoints = cyrusBeckClip(subjectPolygon: finalPoints, clipWindow: clipWindow)
+            }
         case .sutherlandHodgman:
-            finalPoints = clipPolygonWithSutherlandHodgman(finalPoints)
+            if !clipWindow.isEmpty, !alreadyTriangulated {
+                finalPoints = sutherlandHodgmanClip(subjectPolygon: finalPoints, clipWindow: clipWindow)
+            }
         }
 
-        // 2) Triangulate the final polygon with ear clipping so we can draw triangles
+        // 2) If `alreadyTriangulated == true`, we skip the ear clipping,
+        //    assuming that `points` are already provided as triangles (groups of 3).
+        if alreadyTriangulated {
+            let vertexCount = finalPoints.count
+            // We expect multiple of 3
+            if vertexCount < 3 { return }
+
+            // Build an index buffer: for example, [0,1,2, 3,4,5, 6,7,8, ...]
+            var indices: [UInt16] = []
+            indices.reserveCapacity(vertexCount)
+            for i in stride(from: 0, to: vertexCount, by: 3) {
+                indices.append(UInt16(i))
+                indices.append(UInt16(i + 1))
+                indices.append(UInt16(i + 2))
+            }
+
+            // Convert ECTPoints into PolygonVertex (position + uv + color)
+            var polyVertices: [PolygonVertex] = []
+            polyVertices.reserveCapacity(vertexCount)
+
+            let docW = Float(appState.selectedDocument?.width ?? 512)
+            let docH = Float(appState.selectedDocument?.height ?? 512)
+
+            for p in finalPoints {
+                let u = Float(p.x) / docW
+                let v = Float(p.y) / docH
+                polyVertices.append(
+                    PolygonVertex(
+                        position: SIMD2<Float>(Float(p.x), Float(p.y)),
+                        uv: SIMD2<Float>(u, v),
+                        color: color
+                    )
+                )
+            }
+
+            guard let vb = device.makeBuffer(bytes: polyVertices,
+                                             length: polyVertices.count * MemoryLayout<PolygonVertex>.stride,
+                                             options: []),
+                let ib = device.makeBuffer(bytes: indices,
+                                           length: indices.count * MemoryLayout<UInt16>.stride,
+                                           options: [])
+            else {
+                return
+            }
+
+            let polyData = PolygonData(
+                vertexBuffer: vb,
+                indexBuffer: ib,
+                indexCount: indices.count,
+                texture: nil,
+                usesTexture: false
+            )
+
+            polygons.append(polyData)
+            return
+        }
+
+        // 3) If not triangulated, we do a normal ear clipping
         let polygon = ECTPolygon(vertices: finalPoints)
         let earClip = EarClippingTriangulation()
         let triangles = earClip.getEarClipTriangles(polygon: polygon)
+        if triangles.isEmpty { return }
 
-        // 3) Build geometry
-        var uniqueMap = [ECTPoint: UInt16]()
+        // Build a unique vertex list + index list
+        // Each triangle => (a, b, c)
         var polyVertices: [PolygonVertex] = []
-        polyVertices.reserveCapacity(triangles.count * 3)
-
+        var uniqueMap = [ECTPoint: UInt16]()
         var currentIndex: UInt16 = 0
-        func addVertexIfNeeded(_ p: ECTPoint) -> UInt16 {
-            if let idx = uniqueMap[p] {
+        var indices: [UInt16] = []
+
+        let docW = Float(appState.selectedDocument?.width ?? 512)
+        let docH = Float(appState.selectedDocument?.height ?? 512)
+
+        func addVertexIfNeeded(_ pt: ECTPoint) -> UInt16 {
+            if let idx = uniqueMap[pt] {
                 return idx
             }
-            uniqueMap[p] = currentIndex
-            let vx = PolygonVertex(
-                position: SIMD2<Float>(Float(p.x), Float(p.y)),
-                uv: SIMD2<Float>(Float(p.x + 0.5), Float(p.y + 0.5)),
-                color: color
+            uniqueMap[pt] = currentIndex
+
+            let u = Float(pt.x) / docW
+            let v = Float(pt.y) / docH
+            polyVertices.append(
+                PolygonVertex(
+                    position: SIMD2<Float>(Float(pt.x), Float(pt.y)),
+                    uv: SIMD2<Float>(u, v),
+                    color: color
+                )
             )
-            polyVertices.append(vx)
-            let c = currentIndex
+            let thisIdx = currentIndex
             currentIndex += 1
-            return c
+            return thisIdx
         }
 
-        var indices: [UInt16] = []
         for tri in triangles {
             let iA = addVertexIfNeeded(tri.a)
             let iB = addVertexIfNeeded(tri.b)
             let iC = addVertexIfNeeded(tri.c)
-            indices.append(contentsOf: [iA, iB, iC])
+            indices.append(iA)
+            indices.append(iB)
+            indices.append(iC)
         }
 
-        guard !polyVertices.isEmpty, !indices.isEmpty else {
+        guard !polyVertices.isEmpty, !indices.isEmpty else { return }
+
+        guard let vb = device.makeBuffer(bytes: polyVertices,
+                                         length: polyVertices.count * MemoryLayout<PolygonVertex>.stride,
+                                         options: []),
+            let ib = device.makeBuffer(bytes: indices,
+                                       length: indices.count * MemoryLayout<UInt16>.stride,
+                                       options: [])
+        else {
             return
         }
 
-        let vb = device.makeBuffer(
-            bytes: polyVertices,
-            length: polyVertices.count * MemoryLayout<PolygonVertex>.stride,
-            options: []
-        )!
-        let ib = device.makeBuffer(
-            bytes: indices,
-            length: indices.count * MemoryLayout<UInt16>.stride,
-            options: []
-        )!
-
-        let polyData = PolygonData(
+        let newPoly = PolygonData(
             vertexBuffer: vb,
             indexBuffer: ib,
-            indexCount: indices.count
+            indexCount: indices.count,
+            texture: nil,
+            usesTexture: false
         )
-        polygons.append(polyData)
+        polygons.append(newPoly)
     }
 
-    /// Clear all polygons
+    /// Clears our polygon list
     func clearPolygons() {
         polygons.removeAll()
     }
 
-    @MainActor func draw(encoder: MTLRenderCommandEncoder, uniformBuffer: MTLBuffer?) {
-        guard let pipeline = pipelineState,
-              let appState = appState else { return }
-
-        // Fill or line?
-        if appState.fillPolygonBackground {
-            encoder.setTriangleFillMode(.fill)
-        } else {
-            encoder.setTriangleFillMode(.lines)
-        }
+    /// The main draw call: for each polygon, we pick the pipeline (texture or color),
+    /// then set the buffers, then draw.
+    @MainActor
+    func draw(_ encoder: MTLRenderCommandEncoder, uniformBuffer: MTLBuffer?) {
+        guard let appState = appState else { return }
 
         for poly in polygons {
-            encoder.setRenderPipelineState(pipeline)
-            encoder.setVertexBuffer(poly.vertexBuffer, offset: 0, index: 0)
+            // fill or lines => we read from appState
+            let fillMode: MTLTriangleFillMode = appState.fillPolygonBackground ? .fill : .lines
+            encoder.setTriangleFillMode(fillMode)
 
+            // If poly.usesTexture => pipelineStateTexture
+            if poly.usesTexture, let pipelineTex = pipelineStateTexture {
+                encoder.setRenderPipelineState(pipelineTex)
+                if let tex = poly.texture {
+                    encoder.setFragmentTexture(tex, index: 0)
+                }
+            } else {
+                // color pipeline
+                if let pipelineCol = pipelineStateColor {
+                    encoder.setRenderPipelineState(pipelineCol)
+                }
+            }
+
+            // set the vertex buffer
+            encoder.setVertexBuffer(poly.vertexBuffer, offset: 0, index: 0)
+            // uniform
             if let ub = uniformBuffer {
                 encoder.setVertexBuffer(ub, offset: 0, index: 1)
             }
 
+            // draw the triangles
             encoder.drawIndexedPrimitives(
                 type: .triangle,
                 indexCount: poly.indexCount,
@@ -175,26 +289,13 @@ final class PolygonRenderer {
         }
     }
 
-    @MainActor private func clipPolygonWithCyrusBeck(_ points: [ECTPoint]) -> [ECTPoint] {
-        // If there is a locally defined clipWindow, we use it
-        if clipWindow.count >= 3 {
-            return cyrusBeckClip(subjectPolygon: points, clipWindow: clipWindow)
-        }
-        // else, we can see if the appState has lassoPoints
-        if let appState = appState, appState.lassoPoints.count >= 3 {
-            return cyrusBeckClip(subjectPolygon: points, clipWindow: appState.lassoPoints)
-        }
-        // if nothing => no clipping
-        return points
+    // MARK: - Clipping utils (cyrusBeckClip, sutherlandHodgmanClip, etc.)
+
+    func cyrusBeckClip(subjectPolygon: [ECTPoint], clipWindow: [ECTPoint]) -> [ECTPoint] {
+        return cyrusBeckClip(subjectPolygon: subjectPolygon, clipWindow: clipWindow)
     }
 
-    @MainActor private func clipPolygonWithSutherlandHodgman(_ points: [ECTPoint]) -> [ECTPoint] {
-        if clipWindow.count >= 3 {
-            return sutherlandHodgmanClip(subjectPolygon: points, clipWindow: clipWindow)
-        }
-        if let appState = appState, appState.lassoPoints.count >= 3 {
-            return sutherlandHodgmanClip(subjectPolygon: points, clipWindow: appState.lassoPoints)
-        }
-        return points
+    func sutherlandHodgmanClip(subjectPolygon: [ECTPoint], clipWindow: [ECTPoint]) -> [ECTPoint] {
+        return sutherlandHodgmanClip(subjectPolygon: subjectPolygon, clipWindow: clipWindow)
     }
 }

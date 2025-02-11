@@ -98,6 +98,22 @@ struct ToolsPanelView: View {
             .toggleStyle(.checkbox)
             .padding(.vertical, 4)
 
+            // Toggle("Fusionner tous les polygones", isOn: Binding<Bool>(
+            //     get: { appState.selectedDocument?.mergePolygons ?? false },
+            //     set: { newVal in
+            //         guard let doc = appState.selectedDocument else { return }
+            //         if newVal {
+            //             doc.mergePolygons = true
+            //             doc.makeMultiPolygonEarClipAll()
+            //         } else {
+            //             doc.mergePolygons = false
+            //             doc.unmergePolygons()
+            //         }
+            //         appState.mainRenderer?.clearPolygons()
+            //         appState.mainCoordinator?.reloadPolygonsFromDoc()
+            //     }
+            // ))
+
             // List of tools (buttons)
             ForEach(tools) { tool in
                 Button(action: {
@@ -121,16 +137,21 @@ struct ToolsPanelView: View {
                 panel.allowedFileTypes = ["png"]
                 panel.nameFieldStringValue = appState.selectedDocument?.name != nil ? "\(appState.selectedDocument!.name).png" : "Untitled.png"
                 panel.begin { result in
-                    if result == .OK, let url = panel.url, let mtkView = appState.mainCoordinator?.mtkView {
+                    if result == .OK, let url = panel.url, let mtkView = appState.mainCoordinator?.metalView {
                         mtkView.exportToPNG(saveURL: url)
                     }
                 }
             }) {
                 HStack {
-                    Label("Exporter en PNG", systemImage: "square.and.arrow.up")
+                    Image(systemName: "square.and.arrow.up")
+                    Text("Exporter en PNG")
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity)
-            }.frame(maxWidth: .infinity).cornerRadius(4)
+                .padding(.vertical, 4)
+            }
+            .frame(maxWidth: .infinity)
+            .cornerRadius(4)
         }
         .padding(.horizontal)
         // Generic selection sheet
@@ -140,22 +161,11 @@ struct ToolsPanelView: View {
                     title: selectionTitle,
                     options: selectionOptions,
                     isPresented: $showSelectionSheet,
-                    additionalCheckbox: (selectedTool?.name == "Remplissage") ? Binding<Bool>(
-                        get: {
-                            if let tool = selectedTool, tool.name == "Remplissage" {
-                                return appState.pixelFillEnabled
-                            }
-                            return false
-                        },
-                        set: {
-                            if let tool = selectedTool, tool.name == "Remplissage" {
-                                appState.pixelFillEnabled = $0
-                            }
-                        }
-                    ) : nil,
                     onSelection: { selectedAnyItem in
+                        print("Selected tool: \(selectedAnyItem)")
                         handler(selectedAnyItem)
-                    }, onCancel: {
+                    },
+                    onCancel: {
                         selectedTool = nil
                     }
                 )
@@ -186,19 +196,19 @@ struct ToolsPanelView: View {
         case "Polygone":
             // Ask the user for the polygon algorithm
             showSelectionSheet(
-                title: "Choisir l'algorithme de clipping pour le polygone",
-                options: PolygonClippingAlgorithm.allCases
+                title: "Choisir l'algorithme de triangulation pour le polygone",
+                options: PolygonTriangulationAlgorithm.allCases
             ) { algo in
-                appState.selectedPolygonAlgorithm = algo
+                appState.selectedPolygonTriangulationAlgorithm = algo
                 showPolygonSheet = true
             }
 
         case "Polygone par clic":
             showSelectionSheet(
-                title: "Choisir l'algorithme de clipping pour le polygone",
-                options: PolygonClippingAlgorithm.allCases
+                title: "Choisir l'algorithme de triangulation pour le polygone",
+                options: PolygonTriangulationAlgorithm.allCases
             ) { algo in
-                appState.selectedPolygonAlgorithm = algo
+                appState.selectedPolygonTriangulationAlgorithm = algo
             }
 
         case "Remplissage":
@@ -212,12 +222,13 @@ struct ToolsPanelView: View {
         case "Découpage":
             showSelectionSheet(
                 title: "Choisir l'algorithme de découpage",
-                options: [PolygonClippingAlgorithm.cyrusBeck, .sutherlandHodgman]
+                options: PolygonClippingAlgorithm.allCases
             ) { algo in
                 appState.selectedPolygonAlgorithm = algo
             }
 
         case "Formes":
+            // By default use Ear Clipping for triangulation
             showSelectionSheet(
                 title: "Choisir la forme à dessiner",
                 options: ShapeType.allCases

@@ -5,6 +5,7 @@
 //  Created by Michaël ATTAL on 10/01/2025.
 //
 
+import MetalKit
 import SwiftData
 import SwiftUI
 
@@ -86,7 +87,10 @@ struct EditingContentView: View {
                                 Button {
                                     toggleRendererOption(option)
                                 } label: {
-                                    Label("\(option.rawValue) \(selectedRenderers.contains(option) ? "☑︎" : "□")", systemImage: selectedRenderers.contains(option) ? "checkmark" : "")
+                                    Label(
+                                        "\(option.rawValue) \(selectedRenderers.contains(option) ? "☑︎" : "□")",
+                                        systemImage: selectedRenderers.contains(option) ? "checkmark" : ""
+                                    )
                                 }
                             }
                         } label: {
@@ -118,18 +122,65 @@ struct EditingContentView: View {
 
     private func updateRenderers() {
         showTriangle = selectedRenderers.contains(.triangle)
-        // Additional show/hide if needed
+        // Additional show/hide logic if needed
     }
 
     private func loadPolygonsFromDocument() {
         guard let mainRenderer = appState.mainRenderer else {
             return
         }
+        mainRenderer.clearPolygons()
+
         let storedPolygons = document.loadAllPolygons()
+
+        // For each stored polygon, we add it to the polygon renderer
+        // Then if polygonTextureData != nil, we create an MTLTexture for it
+        // and store it in the PolygonData structure
         for sp in storedPolygons {
             let ectPoints = sp.points.map { ECTPoint(x: $0.x, y: $0.y) }
             let c = SIMD4<Float>(sp.color[0], sp.color[1], sp.color[2], sp.color[3])
             mainRenderer.addPolygon(points: ectPoints, color: c)
+
+            // Now retrieve the last PolygonData we just appended
+            if let lastPolyDataIndex = mainRenderer.polygonRenderer.polygons.indices.last {
+                let polyData = mainRenderer.polygonRenderer.polygons[lastPolyDataIndex]
+
+                // If sp has a texture, create MTLTexture
+                if let texData = sp.polygonTextureData,
+                   let w = sp.textureWidth,
+                   let h = sp.textureHeight
+                {
+                    let desc = MTLTextureDescriptor()
+                    desc.pixelFormat = .rgba8Unorm
+                    desc.width = w
+                    desc.height = h
+                    desc.usage = [.shaderRead]
+                    desc.storageMode = .managed
+
+                    if let newTexture = mainRenderer.device.makeTexture(descriptor: desc) {
+                        // Copy bytes
+                        texData.withUnsafeBytes { rawBuf in
+                            newTexture.replace(
+                                region: MTLRegionMake2D(0, 0, w, h),
+                                mipmapLevel: 0,
+                                withBytes: rawBuf.baseAddress!,
+                                bytesPerRow: w * 4
+                            )
+                        }
+
+                        // Now store this into the polygonRenderer's array
+                        // We cannot mutate directly 'polyData' if it's let, so build a new one:
+                        let newPolyData = PolygonData(
+                            vertexBuffer: polyData.vertexBuffer,
+                            indexBuffer: polyData.indexBuffer,
+                            indexCount: polyData.indexCount,
+                            texture: newTexture,
+                            usesTexture: true
+                        )
+                        mainRenderer.polygonRenderer.polygons[lastPolyDataIndex] = newPolyData
+                    }
+                }
+            }
         }
     }
 

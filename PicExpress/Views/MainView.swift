@@ -62,6 +62,7 @@ struct MainView: View {
                                             width: width,
                                             height: height)
             modelContext.insert(newDoc)
+            appState.selectedTool = tools.first
             selectedDocument = newDoc
         }
     }
@@ -74,5 +75,7 @@ struct MainView: View {
         withAnimation {
             modelContext.delete(doc)
         }
+        
+        appState.selectedTool = tools.first
     }
 }

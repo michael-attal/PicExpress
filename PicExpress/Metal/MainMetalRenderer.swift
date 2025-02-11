@@ -8,29 +8,37 @@
 import MetalKit
 import simd
 
-/// Common uniform struct for polygons, triangles, etc.
+/// Common uniform struct for polygons, points, etc.
+/// Must match exactly the Metal side in size (96 bytes)
 struct TransformUniforms {
-    var transform: float4x4
-    var polygonColor: SIMD4<Float> = .init(1, 0, 0, 1)
+    var transform: simd_float4x4 // 64
+    var polygonColor: SIMD4<Float> // 16 => 80
+    var docWidth: Float // 4  => 84
+    var docHeight: Float // 4  => 88
+    // Force alignment to 16 => we add 8 bytes so total=96
+    var _padding: SIMD2<Float> = .zero
 }
 
-final class MainMetalRenderer: NSObject, MTKViewDelegate {
-    private let device: MTLDevice
+public final class MainMetalRenderer: NSObject, MTKViewDelegate {
+    public let device: MTLDevice
     private var commandQueue: MTLCommandQueue?
 
     // Sub-renderers
-    private let triangleRenderer: TriangleRenderer
-    private let polygonRenderer: PolygonRenderer
-    let pointsRenderer: PointsRenderer?
-
-    /// GPU fill sub-renderer
-    private let gpuFillRenderer: GPUFillRenderer
+    let triangleRenderer: TriangleRenderer
+    let polygonRenderer: PolygonRenderer
+    let pointsRenderer: PointsPreviewRenderer?
+    let gpuFillRenderer: GPUFillRenderer
 
     var previewColor: SIMD4<Float> = .init(1, 1, 1, 1)
 
     // For transform
     private var uniformBuffer: MTLBuffer?
-    private var uniforms = TransformUniforms(transform: matrix_identity_float4x4)
+    private var uniforms = TransformUniforms(
+        transform: matrix_identity_float4x4,
+        polygonColor: SIMD4<Float>(1, 1, 1, 1),
+        docWidth: 512,
+        docHeight: 512
+    )
 
     private var zoom: Float = 1.0
     private var pan: SIMD2<Float> = .zero
@@ -38,8 +46,8 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     // Do we show the triangle test ?
     private var showTriangleFlag: Bool
 
-    private let texWidth: Int
-    private let texHeight: Int
+    let texWidth: Int
+    let texHeight: Int
 
     // The texture for pixel fill
     var fillTexture: MTLTexture?
@@ -69,9 +77,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         // Sub-renderers
         self.triangleRenderer = TriangleRenderer(device: device, library: library)
         self.polygonRenderer = PolygonRenderer(device: device, library: library, appState: appState)
-        self.pointsRenderer = PointsRenderer(device: device, library: library)
-
-        // GPU Fill
+        self.pointsRenderer = PointsPreviewRenderer(device: device, library: library)
         self.gpuFillRenderer = GPUFillRenderer(device: device, library: library)
 
         super.init()
@@ -82,9 +88,12 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
     private func buildResources() {
         commandQueue = device.makeCommandQueue()
 
-        // Create uniform buffer
+        // Create the uniform buffer
         uniformBuffer = device.makeBuffer(length: MemoryLayout<TransformUniforms>.size,
                                           options: [])
+        // Set docWidth/docHeight
+        uniforms.docWidth = Float(texWidth)
+        uniforms.docHeight = Float(texHeight)
 
         // Create fillTexture with doc size
         let desc = MTLTextureDescriptor()
@@ -99,7 +108,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
             cpuBuffer = [UInt8](repeating: 0, count: texWidth * texHeight * 4)
 
             if var cbuf = cpuBuffer {
-                // Fill with black or any color
+                // Fill with black
                 for i in 0 ..< (texWidth * texHeight) {
                     let idx = i * 4
                     cbuf[idx+0] = 0 // R
@@ -111,13 +120,10 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
                           mipmapLevel: 0,
                           withBytes: &cbuf,
                           bytesPerRow: texWidth * 4)
-
                 cpuBuffer = cbuf
             }
         }
     }
-
-    // MARK: - Public
 
     func showTriangle(_ flag: Bool) {
         showTriangleFlag = flag
@@ -137,8 +143,9 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         polygonRenderer.setClipWindow(points)
     }
 
-    @MainActor func addPolygon(points: [ECTPoint], color: SIMD4<Float>) {
-        polygonRenderer.addPolygon(points: points, color: color)
+    @MainActor
+    func addPolygon(points: [ECTPoint], color: SIMD4<Float>, alreadyTriangulated: Bool = false) {
+        polygonRenderer.addPolygon(points: points, color: color, alreadyTriangulated: alreadyTriangulated)
     }
 
     // MARK: - GPU fill => Bonus function
@@ -157,7 +164,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
               let cmdBuff = cmdQ.makeCommandBuffer(),
               let fillTex = fillTexture
         else {
-            print("No commandQueue or fillTexture => can't GPU fill")
+            print("No commandQueue or fillTexture => can't GPU fill.")
             return
         }
 
@@ -180,7 +187,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         cmdBuff.waitUntilCompleted()
 
         // => fillTexture is updated
-        // => reload cpuBuffer if necessary:
+        // Reload cpuBuffer
         if var cbuf = cpuBuffer {
             fillTex.getBytes(&cbuf,
                              bytesPerRow: fillTex.width * 4,
@@ -190,16 +197,28 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    @MainActor
+    func updateFillTextureCPU(buffer: [UInt8]) {
+        guard let fillTex = fillTexture else { return }
+        fillTex.replace(
+            region: MTLRegionMake2D(0, 0, texWidth, texHeight),
+            mipmapLevel: 0,
+            withBytes: buffer,
+            bytesPerRow: texWidth * 4
+        )
+    }
+
     // MARK: - MTKViewDelegate
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // not used
+    }
 
-    func draw(in view: MTKView) {
+    public func draw(in view: MTKView) {
         guard let rpd = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let cmdQ = commandQueue,
-              let cmdBuff = cmdQ.makeCommandBuffer()
-        else { return }
+              let cmdBuff = cmdQ.makeCommandBuffer() else { return }
 
         updateUniforms()
 
@@ -213,7 +232,7 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
         }
 
         polygonRenderer.draw(
-            encoder: encoder,
+            encoder,
             uniformBuffer: uniformBuffer
         )
 
@@ -229,12 +248,14 @@ final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
     private func updateUniforms() {
         let s = zoom
+        // Scale matrix for zoom
         let scaleMatrix = float4x4(
             simd_float4(s, 0, 0, 0),
             simd_float4(0, s, 0, 0),
             simd_float4(0, 0, 1, 0),
             simd_float4(0, 0, 0, 1)
         )
+        // Translate matrix for pan
         let tx = pan.x * 2.0
         let ty = -pan.y * 2.0
         let translationMatrix = float4x4(

@@ -1,5 +1,5 @@
 //
-//  EarClippingTriangulation.swift
+//  PolygonTriangulationAlgorithm.swift
 //  PicExpress
 //
 //  Created by Michaël ATTAL on 10/01/2025.
@@ -10,6 +10,15 @@ import Foundation
 import simd
 
 // NOTE: MARK: - Data Structures
+
+enum PolygonTriangulationAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem {
+    public var id: String { rawValue }
+    case earClipping = "Ear Clipping"
+
+    public var description: String { rawValue }
+}
+
+// MARK: - Ear Clipping Triangulation
 
 public typealias ECTPoint = SIMD2<Double>
 
@@ -26,7 +35,7 @@ public struct ECTPolygon {
         self.vertices = vertices
         self.verticeFirstIndices = vertices.enumerated().grouped { entry in
             entry.element
-        }.compactMapValues{ $0.first?.offset }
+        }.compactMapValues { $0.first?.offset }
     }
 }
 
@@ -184,9 +193,9 @@ class EarClippingTriangulation {
 
     @inline(__always) func pointInTriangle(p: ECTPoint, a: ECTPoint, b: ECTPoint, c: ECTPoint) -> Bool {
         // NOTE: Compute vectors
-        let v0 = c-a
-        let v1 = b-a
-        let v2 = p-a
+        let v0 = c - a
+        let v1 = b - a
+        let v2 = p - a
 
         // NOTE: Compute dot products
         let dot00 = simd_dot(v0, v0)
@@ -201,7 +210,7 @@ class EarClippingTriangulation {
             return false // NOTE: The triangle is degenerate
         }
 
-        let uv: SIMD2<Double> = (SIMD2(dot11 * dot02, dot00 * dot12) - SIMD2(dot01 * dot12, dot01 * dot02))/denom
+        let uv: SIMD2<Double> = (SIMD2(dot11 * dot02, dot00 * dot12) - SIMD2(dot01 * dot12, dot01 * dot02)) / denom
         // NOTE: Check if point is in triangle
         return (uv.x >= -epsilon) && (uv.y >= -epsilon) && (uv.x + uv.y <= 1.0 + epsilon)
     }
@@ -306,9 +315,9 @@ class EarClippingTriangulation {
         let A = edge.0
         let B = edge.1
 
-        let edgeDir = B-A
-        let delta = A-M
-        
+        let edgeDir = B - A
+        let delta = A - M
+
         let denominator = simd_determinant(simd_double2x2(rayDir, edgeDir))
 
         if abs(denominator) < epsilon {
@@ -316,8 +325,8 @@ class EarClippingTriangulation {
         }
 
         let tu_num = SIMD2(-simd_determinant(simd_double2x2(delta, edgeDir)), simd_determinant(simd_double2x2(rayDir, edgeDir)))
-        let tu = tu_num/denominator
-        
+        let tu = tu_num / denominator
+
         // NOTE: Check if intersection is valid
         if tu.x >= -epsilon, tu.y >= -epsilon, tu.y <= 1.0 + epsilon {
             return tu.x // NOTE: Return t, the parameter along the ray

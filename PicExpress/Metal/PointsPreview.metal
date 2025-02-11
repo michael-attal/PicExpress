@@ -8,13 +8,18 @@
 #include <metal_stdlib>
 using namespace metal;
 
+/// The input vertex for a point (in pixel coords).
 struct PointPreviewVertexIn {
     float2 position [[attribute(0)]];
 };
 
+/// Matches the Swift uniform struct, including docWidth/docHeight
 struct PointsPreviewTransformUniforms {
-    float4x4 transform;
-    float4   polygonColor;
+    float4x4 transform;     // 64 bytes
+    float4   polygonColor;  // 16 => total 80
+    float    docWidth;      // 4  => 84
+    float    docHeight;     // 4  => 88
+    float2   _padding;      // 8  => total 96
 };
 
 struct PointsPreviewVSOut {
@@ -23,6 +28,7 @@ struct PointsPreviewVSOut {
     float  pointSize [[point_size]];
 };
 
+// Vertex shader: convert from [0..docWidth] -> [-1..1], then apply transform
 vertex PointsPreviewVSOut vs_points_preview(
     PointPreviewVertexIn inVertex [[stage_in]],
     constant PointsPreviewTransformUniforms &uniforms [[buffer(1)]]
@@ -30,17 +36,23 @@ vertex PointsPreviewVSOut vs_points_preview(
 {
     PointsPreviewVSOut out;
     
-    float4 pos = float4(inVertex.position, 0.0, 1.0);
+    float2 pixPos = inVertex.position;
+    // Convert pixel -> [-1..1]
+    float2 ndc;
+    ndc.x = (pixPos.x / uniforms.docWidth)  * 2.0 - 1.0;
+    ndc.y = (pixPos.y / uniforms.docHeight) * 2.0 - 1.0;
+    
+    float4 pos = float4(ndc, 0.0, 1.0);
+    // Then apply transform (zoom, pan)
     pos = uniforms.transform * pos;
-
+    
     out.position = pos;
-
     out.color    = uniforms.polygonColor;
-
     out.pointSize = 8.0;
     return out;
 }
 
+// Simple fragment shader that outputs the color
 fragment float4 fs_points_preview(PointsPreviewVSOut inFrag [[stage_in]])
 {
     return inFrag.color;

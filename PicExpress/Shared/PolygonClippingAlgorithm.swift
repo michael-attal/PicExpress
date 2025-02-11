@@ -11,9 +11,6 @@ import Foundation
 public enum PolygonClippingAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem {
     public var id: String { rawValue }
 
-    /// Triangulation via Ear Clipping
-    case earClipping = "Ear Clipping"
-
     /// Cyrus-Beck parametric clipping
     case cyrusBeck = "Cyrus-Beck"
 
@@ -88,9 +85,6 @@ public func clipWithConcaveWindow(
             return cyrusBeckClip(subjectPolygon: subjectPolygon, clipWindow: windowPolygon)
         case .sutherlandHodgman:
             return sutherlandHodgmanClip(subjectPolygon: subjectPolygon, clipWindow: windowPolygon)
-        case .earClipping:
-            // Not typically used for clipping in that sense, but let's just return the original
-            return subjectPolygon
         }
     }
 
@@ -105,8 +99,6 @@ public func clipWithConcaveWindow(
             partial = cyrusBeckClip(subjectPolygon: subjectPolygon, clipWindow: tri)
         case .sutherlandHodgman:
             partial = sutherlandHodgmanClip(subjectPolygon: subjectPolygon, clipWindow: tri)
-        case .earClipping:
-            partial = subjectPolygon
         }
         if partial.count >= 3 {
             combined.append(partial)
