@@ -7,11 +7,48 @@
 
 import SwiftUI
 
-/// Represents a tool in the panel
-struct Tool: Identifiable, Hashable {
-    let id = UUID()
-    let name: String
-    let systemImage: String
+/// Enum representing different tools available in the app.
+enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, SelectionItem {
+    public var id: String { rawValue }
+
+    case freeMove
+    case fill
+    case shapes
+    // case eraser
+    case cut
+    // case resize
+    case addPolygonList
+    case addPolygonFromClick
+
+    /// Returns the display name of the tool.
+    var name: String {
+        switch self {
+        case .freeMove: return "Déplacement libre"
+        case .fill: return "Remplissage"
+        case .shapes: return "Formes"
+        // case .eraser: return "Gomme"
+        case .cut: return "Découpage"
+        // case .resize: return "Redimensionnement"
+        case .addPolygonList: return "Ajout de polygone par une liste de points"
+        case .addPolygonFromClick: return "Ajout de polygone par clic dans le mesh"
+        }
+    }
+
+    /// Returns the system image associated with the tool.
+    var systemImage: String {
+        switch self {
+        case .freeMove: return "hand.draw"
+        case .fill: return "drop.fill"
+        case .shapes: return "square.on.circle"
+        // case .eraser: "eraser"
+        case .cut: return "lasso"
+        // case .resize: return "hand.point.up.braille"
+        case .addPolygonList: return "hexagon.fill"
+        case .addPolygonFromClick: return "hand.point.up.left"
+        }
+    }
+
+    public var description: String { name }
 }
 
 /// This enum describes the different shapes we can create when using the "Formes" tool.
@@ -34,9 +71,9 @@ struct ToolsPanelView: View {
     @Environment(AppState.self) private var appState
 
     /// The array of tools displayed in the left panel
-    let tools: [Tool]
+    let tools: [AvailableTool]
 
-    @State private var selectedTool: Tool? = nil
+    @State private var selectedTool: AvailableTool? = nil
     @State private var showPolygonSheet = false
 
     // For the selection sheet
@@ -90,29 +127,13 @@ struct ToolsPanelView: View {
             .cornerRadius(4)
 
             Toggle(isOn: Binding<Bool>(
-                get: { appState.fillPolygonBackground },
-                set: { appState.fillPolygonBackground = $0 }
+                get: { appState.shouldFillMeshWithBackground },
+                set: { appState.shouldFillMeshWithBackground = $0 }
             )) {
                 Text("Remplir l'arrière-plan du polygone")
             }
             .toggleStyle(.checkbox)
             .padding(.vertical, 4)
-
-            // Toggle("Fusionner tous les polygones", isOn: Binding<Bool>(
-            //     get: { appState.selectedDocument?.mergePolygons ?? false },
-            //     set: { newVal in
-            //         guard let doc = appState.selectedDocument else { return }
-            //         if newVal {
-            //             doc.mergePolygons = true
-            //             doc.makeMultiPolygonEarClipAll()
-            //         } else {
-            //             doc.mergePolygons = false
-            //             doc.unmergePolygons()
-            //         }
-            //         appState.mainRenderer?.clearPolygons()
-            //         appState.mainCoordinator?.reloadPolygonsFromDoc()
-            //     }
-            // ))
 
             // List of tools (buttons)
             ForEach(tools) { tool in
@@ -186,48 +207,48 @@ struct ToolsPanelView: View {
     }
 
     /// Called when the user taps on a tool
-    private func handleToolSelected(_ tool: Tool) {
+    private func handleToolSelected(_ tool: AvailableTool) {
         print("Tool selected: \(tool.name)")
         selectedTool = tool
         showPolygonSheet = false
         showSelectionSheet = false
 
-        switch tool.name {
-        case "Polygone":
+        switch tool {
+        case .addPolygonList:
             // Ask the user for the polygon algorithm
             showSelectionSheet(
                 title: "Choisir l'algorithme de triangulation pour le polygone",
-                options: PolygonTriangulationAlgorithm.allCases
+                options: AvailableTriangulationAlgorithm.allCases
             ) { algo in
-                appState.selectedPolygonTriangulationAlgorithm = algo
+                appState.selectedTriangulationAlgorithm = algo
                 showPolygonSheet = true
             }
 
-        case "Polygone par clic":
+        case .addPolygonFromClick:
             showSelectionSheet(
-                title: "Choisir l'algorithme de triangulation pour le polygone",
-                options: PolygonTriangulationAlgorithm.allCases
+                title: "Choisir l'algorithme de triangulation pour le polygone (clic)",
+                options: AvailableTriangulationAlgorithm.allCases
             ) { algo in
-                appState.selectedPolygonTriangulationAlgorithm = algo
+                appState.selectedTriangulationAlgorithm = algo
             }
 
-        case "Remplissage":
+        case .fill:
             showSelectionSheet(
                 title: "Choisir l'algorithme de remplissage",
-                options: [FillAlgorithm.seedRecursive, .seedStack, .scanline, .lca]
+                options: [AvailableFillAlgorithm.seedRecursive, .seedStack, .scanline, .lca]
             ) { algo in
-                appState.fillAlgorithm = algo
+                appState.selectedFillAlgorithm = algo
             }
 
-        case "Découpage":
+        case .cut:
             showSelectionSheet(
                 title: "Choisir l'algorithme de découpage",
-                options: PolygonClippingAlgorithm.allCases
+                options: AvailableClippingAlgorithm.allCases
             ) { algo in
-                appState.selectedPolygonAlgorithm = algo
+                appState.selectedClippingAlgorithm = algo
             }
 
-        case "Formes":
+        case .shapes:
             // By default use Ear Clipping for triangulation
             showSelectionSheet(
                 title: "Choisir la forme à dessiner",
@@ -236,10 +257,10 @@ struct ToolsPanelView: View {
                 appState.currentShapeType = shape
             }
 
-        case "Redimensionnement":
-            // No need to ask an algo => user just wants to move vertices
-            // We do nothing special here
-            print("Mode: Redimensionnement => user can drag the lassoPoints vertices now")
+        // case .resize:
+        //     // No need to ask an algo => user just wants to move vertices
+        //     // We do nothing special here
+        //     print("Mode: Redimensionnement => user can drag the lassoPoints vertices now")
 
         default:
             break

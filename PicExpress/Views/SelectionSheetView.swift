@@ -78,8 +78,8 @@ struct SelectionSheetView<T: SelectionItem>: View {
                 VStack(spacing: 10) {
                     Text("Règle de remplissage :")
                     Picker("Règle de remplissage :", selection: Binding<FillRule>(
-                        get: { appState.fillRule },
-                        set: { appState.fillRule = $0 }
+                        get: { appState.selectedFillRule },
+                        set: { appState.selectedFillRule = $0 }
                     )) {
                         ForEach(FillRule.allCases, id: \.self) { fillRule in
                             Text(fillRule.rawValue)

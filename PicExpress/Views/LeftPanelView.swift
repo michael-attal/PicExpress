@@ -21,7 +21,7 @@ struct LeftPanelView: View {
     let onDeleteDocument: (PicExpressDocument) -> Void
     
     /// Tools
-    let tools: [Tool]
+    let tools: [AvailableTool]
     
     /// When the user manually enters polygon points
     let onPolygonPoints: ([ECTPoint], Color) -> Void

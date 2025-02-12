@@ -10,9 +10,7 @@ import SwiftData
 import SwiftUI
 
 enum RendererOptions: String, CaseIterable, Identifiable {
-    case polygon = "Polygone"
-    case triangle = "Triangle"
-    case circle = "Cercle"
+    case defaultMesh = "Par défaut (Mesh unique)"
 
     var id: String { rawValue }
 }
@@ -29,31 +27,27 @@ struct EditingContentView: View {
     @State private var zoom: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
 
-    // Display triangle or not (for testing multiple renderer in metal)
-    @State private var showTriangle = false
-
-    @State private var selectedRenderers: Set<RendererOptions> = [.polygon]
+    @State private var selectedRenderers: Set<RendererOptions> = [.defaultMesh]
 
     var body: some View {
         VStack(spacing: 0) {
-            if appState.selectedTool?.name == "Polygone par clic" || appState.selectedTool?.name == "Découpage" {
+            if appState.selectedTool == .addPolygonFromClick || appState.selectedTool == .cut {
                 Text("Cliquez sur au moins trois points pour créer une forme. Appuyez sur Entrée pour valider.")
                     .padding(8)
                     .foregroundColor(.yellow)
-            } else if appState.selectedTool?.name == "Redimensionnement" {
-                Text("Cliquez sur un sommet existant pour le déplacer. Faites un glisser (drag) pour modifier le polygone.")
-                    .padding(8)
-                    .foregroundColor(.yellow)
             }
+            // else if appState.selectedTool == .resize {
+            //     Text("Cliquez sur un sommet existant pour le déplacer. Faites un glisser (drag) pour modifier la forme.")
+            //         .padding(8)
+            //         .foregroundColor(.yellow)
+            // }
 
             // --- Metal canvas zone ---
-            // RotationMetalCanvasTestView(contentMode: .fit)
             MetalCanvasView(
                 zoom: $zoom,
-                panOffset: $panOffset,
-                showTriangle: $showTriangle
+                panOffset: $panOffset
             )
-            // .aspectRatio(1, contentMode: .fit)
+            .aspectRatio(CGFloat(appState.selectedDocument?.width ?? 1) / CGFloat(appState.selectedDocument?.height ?? 1), contentMode: .fit)
         }
         .navigationTitle(document.name)
         .toolbar {
@@ -102,12 +96,12 @@ struct EditingContentView: View {
             }
         }
         .onChange(of: document) {
-            clearPreviousPolygon()
-            loadPolygonsFromDocument()
+            clearPreviousMesh()
+            loadMeshFromDocument()
         }
         .task {
-            // Load and display the list of polygons in the document first time the view appear and then onChange above
-            loadPolygonsFromDocument()
+            // Load and display the mesh when the view appears (and also on doc change)
+            loadMeshFromDocument()
         }
     }
 
@@ -120,74 +114,36 @@ struct EditingContentView: View {
         updateRenderers()
     }
 
-    private func updateRenderers() {
-        showTriangle = selectedRenderers.contains(.triangle)
-        // Additional show/hide logic if needed
-    }
+    private func updateRenderers() {}
 
-    private func loadPolygonsFromDocument() {
+    // MARK: - loadMeshFromDocument
+
+    /// We read the mesh from the doc, then update the main renderer's mesh.
+    private func loadMeshFromDocument() {
         guard let mainRenderer = appState.mainRenderer else {
             return
         }
-        mainRenderer.clearPolygons()
+        // 1) Clear existing mesh
+        clearPreviousMesh()
 
-        let storedPolygons = document.loadAllPolygons()
-
-        // For each stored polygon, we add it to the polygon renderer
-        // Then if polygonTextureData != nil, we create an MTLTexture for it
-        // and store it in the PolygonData structure
-        for sp in storedPolygons {
-            let ectPoints = sp.points.map { ECTPoint(x: $0.x, y: $0.y) }
-            let c = SIMD4<Float>(sp.color[0], sp.color[1], sp.color[2], sp.color[3])
-            mainRenderer.addPolygon(points: ectPoints, color: c)
-
-            // Now retrieve the last PolygonData we just appended
-            if let lastPolyDataIndex = mainRenderer.polygonRenderer.polygons.indices.last {
-                let polyData = mainRenderer.polygonRenderer.polygons[lastPolyDataIndex]
-
-                // If sp has a texture, create MTLTexture
-                if let texData = sp.polygonTextureData,
-                   let w = sp.textureWidth,
-                   let h = sp.textureHeight
-                {
-                    let desc = MTLTextureDescriptor()
-                    desc.pixelFormat = .rgba8Unorm
-                    desc.width = w
-                    desc.height = h
-                    desc.usage = [.shaderRead]
-                    desc.storageMode = .managed
-
-                    if let newTexture = mainRenderer.device.makeTexture(descriptor: desc) {
-                        // Copy bytes
-                        texData.withUnsafeBytes { rawBuf in
-                            newTexture.replace(
-                                region: MTLRegionMake2D(0, 0, w, h),
-                                mipmapLevel: 0,
-                                withBytes: rawBuf.baseAddress!,
-                                bytesPerRow: w * 4
-                            )
-                        }
-
-                        // Now store this into the polygonRenderer's array
-                        // We cannot mutate directly 'polyData' if it's let, so build a new one:
-                        let newPolyData = PolygonData(
-                            vertexBuffer: polyData.vertexBuffer,
-                            indexBuffer: polyData.indexBuffer,
-                            indexCount: polyData.indexCount,
-                            texture: newTexture,
-                            usesTexture: true
-                        )
-                        mainRenderer.polygonRenderer.polygons[lastPolyDataIndex] = newPolyData
-                    }
-                }
-            }
+        // 2) Check if the doc has a saved mesh
+        if let (vertices, indices) = document.loadMesh() {
+            // 3) Send this mesh to the renderer
+            mainRenderer.meshRenderer.updateMesh(vertices: vertices, indices: indices)
+            print("loadMeshFromDocument: Mesh loaded from doc and updated in mainRenderer.")
+        } else {
+            print("loadMeshFromDocument: No mesh found in doc.")
         }
     }
 
-    private func clearPreviousPolygon() {
+    // MARK: - clearPreviousMesh
+
+    /// Replaces clearPreviousPolygon. We clear the mesh in the mainRenderer (sets empty buffers).
+    private func clearPreviousMesh() {
         guard let mainRenderer = appState.mainRenderer else {
             return
         }
-        mainRenderer.clearPolygons()
+        mainRenderer.meshRenderer.updateMesh(vertices: [], indices: [])
+        print("clearPreviousMesh: Emptied the big mesh from mainRenderer.")
     }
 }

@@ -1,5 +1,5 @@
 //
-//  Polygon.metal
+//  Mesh.metal
 //  PicExpress
 //
 //  Created by Michaël ATTAL on 10/01/2025.
@@ -18,7 +18,7 @@ struct TransformUniforms {
 };
 
 /// Each polygon vertex (in pixel coords)
-struct PolygonVertex {
+struct MeshVertex {
     float2 position;  // pixel coords in [0..docWidth], [0..docHeight]
     float2 uv;
     float4 color;     // each vertex color
@@ -32,8 +32,8 @@ struct VertexOut {
 
 // Vertex shader: converts from pixel coords [0..width] to clip space [-1..1],
 // then applies transform (zoom/pan).
-vertex VertexOut vs_polygon(
-    const device PolygonVertex* vertices [[buffer(0)]],
+vertex VertexOut vs_mesh(
+    const device MeshVertex* vertices [[buffer(0)]],
     uint vid [[vertex_id]],
     constant TransformUniforms& uniforms [[buffer(1)]]
 ) {
@@ -57,14 +57,14 @@ vertex VertexOut vs_polygon(
 }
 
 // Fragment shader: returns the color stored in the vertex (classic approach)
-fragment float4 fs_polygon(VertexOut in [[stage_in]]) {
+fragment float4 fs_mesh(VertexOut in [[stage_in]]) {
     return in.color;
 }
 
 /// New fragment shader to sample from a polygon's texture
 /// We'll pass the texture as 'polyTex' in Swift (via setFragmentTexture).
 /// We'll use in.uv to sample it.
-fragment float4 fs_polygon_textured(VertexOut in [[stage_in]],
+fragment float4 fs_mesh_textured(VertexOut in [[stage_in]],
                                     texture2d<float> polyTex [[texture(0)]])
 {
     constexpr sampler s(address::clamp_to_edge, filter::nearest);

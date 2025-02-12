@@ -32,19 +32,19 @@ import SwiftUI
     var selectedBackgroundColor: Color = .black
 
     /// The currently selected tool in the left panel
-    var selectedTool: Tool? = nil
+    var selectedTool: AvailableTool? = .freeMove
 
     /// The fill algorithm chosen by the user (seed recursive, seed stack, scanline, LCA)
-    var fillAlgorithm: FillAlgorithm = .seedRecursive
+    var selectedFillAlgorithm: AvailableFillAlgorithm = .seedRecursive
 
-    /// Should we fill polygon interiors with color or only draw outlines
-    var fillPolygonBackground: Bool = true
+    /// Should we fill mesh polygons interiors with color or only draw outlines
+    var shouldFillMeshWithBackground: Bool = true
 
-    /// Which polygon clipping algorithm to use
-    var selectedPolygonAlgorithm: PolygonClippingAlgorithm = .sutherlandHodgman
+    /// Which clipping algorithm to use
+    var selectedClippingAlgorithm: AvailableClippingAlgorithm = .sutherlandHodgman
 
-    /// Which polygon triangulation algorithm to use
-    var selectedPolygonTriangulationAlgorithm: PolygonTriangulationAlgorithm = .earClipping
+    /// Which triangulation algorithm to use
+    var selectedTriangulationAlgorithm: AvailableTriangulationAlgorithm = .earClipping
 
     /// When user picks the "Découpage" tool, we store the points of the freehand or clicked polygon:
     var lassoPoints: [ECTPoint] = []
@@ -52,14 +52,22 @@ import SwiftUI
     /// For the shape tool, we store the current shape type if the user chooses "Formes".
     var currentShapeType: ShapeType? = nil
 
-    // The fill rule => evenOdd (pair-impair) or winding (enroulement)
-    var fillRule: FillRule = .evenOdd
+    // The fill rule => evenOdd (pair-impair) or winding (enroulement) or both
+    var selectedFillRule: FillRule = .evenOdd
 
-    /// Stores the given polygon in the current selectedDocument, then displays it immediately.
-    func storePolygonInDocument(_ points: [ECTPoint], color: Color) {
-        guard let doc = selectedDocument else { return }
+    /// Store or build a single big mesh in the doc + mainRenderer.
+    ///
+    /// - parameter polygons: an array of polygons, each polygon is a list of ECTPoint
+    ///   for example if the user is making multiple shapes at once,
+    ///   or you can pass just one polygon in a list of size=1.
+    /// - parameter color: SwiftUI color for the mesh.
+    func storeMeshInDocument(_ polygons: [[ECTPoint]], color: Color) {
+        guard let doc = selectedDocument else {
+            print("No document selected.")
+            return
+        }
 
-        // Convert SwiftUI.Color -> RGBA
+        // 1) Convert SwiftUI.Color to RGBA float
         let uiColor = NSColor(color)
         var red: CGFloat = 0
         var green: CGFloat = 0
@@ -69,30 +77,30 @@ import SwiftUI
         if let converted = uiColor.usingColorSpace(.deviceRGB) {
             converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         } else {
-            print("Impossible to convert color (catalog color?).")
+            print("Cannot convert color space.")
+        }
+        let colorVec = SIMD4<Float>(Float(red), Float(green), Float(blue), Float(alpha))
+
+        // 2) Convert your ECTPoints => arrays de SIMD2<Float>
+        //    Car mainRenderer.buildGlobalMesh(...) prend des [SIMD2<Float>]
+        let polygonsF: [[SIMD2<Float>]] = polygons.map { polyECT in
+            polyECT.map { pt in SIMD2<Float>(Float(pt.x), Float(pt.y)) }
         }
 
-        // 1) Load existing polygons from the document
-        var existingPolygons = doc.loadAllPolygons()
-
-        // 2) Build a new StoredPolygon
-        let points2D = points.map { Point2D(x: $0.x, y: $0.y) }
-        let colorArray = [Float(red), Float(green), Float(blue), Float(alpha)]
-        let newPoly = StoredPolygon(
-            points: points2D,
-            color: colorArray,
-            polygonTextureData: nil,
-            textureWidth: nil,
-            textureHeight: nil
+        // 3) Build the big mesh => calls ear clipping, etc.
+        //    We can pick an algo de clipping if we want
+        mainRenderer?.buildGlobalMesh(
+            polygons: polygonsF,
+            clippingAlgorithm: selectedClippingAlgorithm, // or nil if no clipping
+            clipWindow: [], // or some polygon for window
+            color: colorVec
         )
 
-        // 3) Append and save
-        existingPolygons.append(newPoly)
-        doc.saveAllPolygons(existingPolygons)
-        print("Now doc has \(existingPolygons.count) polygons stored.")
-
-        // 4) Immediately display it in the mainRenderer
-        let colorVec = SIMD4<Float>(colorArray[0], colorArray[1], colorArray[2], colorArray[3])
-        mainRenderer?.addPolygon(points: points, color: colorVec)
+        if let (verts, inds) = mainRenderer?.exportCurrentMesh() {
+            doc.saveMesh(verts, inds)
+            print("storeMeshInDocument: doc meshData updated.")
+        } else {
+            print("storeMeshInDocument: no mesh to save")
+        }
     }
 }
