@@ -358,45 +358,62 @@ class EarClippingTriangulation {
     static func earClipOnePolygon(
         ectPoints: [ECTPoint],
         color: Color,
-        existingVertexCount: Int
+        existingVertexCount: Int,
+        polygonID: Int32
     ) -> ([PolygonVertex], [UInt16]) {
         let ectPoly = ECTPolygon(vertices: ectPoints)
-        
         let earClip = EarClippingTriangulation()
         let triangles = earClip.getEarClipTriangles(polygon: ectPoly)
-        
+
         let col = color.toSIMD4()
-        
-        // Construction of Vertex Indices
+
+        // Construction of Vertex + Indices
         var newVerts: [PolygonVertex] = []
         var newInds: [UInt16] = []
         var currentIndex = UInt16(existingVertexCount)
-        
+
+        let defaultPolyIDs = simd_int4(polygonID, -1, -1, -1)
+
         for tri in triangles {
             let A = SIMD2<Float>(Float(tri.a.x), Float(tri.a.y))
             let B = SIMD2<Float>(Float(tri.b.x), Float(tri.b.y))
             let C = SIMD2<Float>(Float(tri.c.x), Float(tri.c.y))
-            
+
             let iA = currentIndex
             let iB = currentIndex + 1
             let iC = currentIndex + 2
             currentIndex += 3
-            
+
             newInds.append(iA)
             newInds.append(iB)
             newInds.append(iC)
-            
-            newVerts.append(PolygonVertex(position: A,
-                                          uv: .zero,
-                                          color: col))
-            newVerts.append(PolygonVertex(position: B,
-                                          uv: .zero,
-                                          color: col))
-            newVerts.append(PolygonVertex(position: C,
-                                          uv: .zero,
-                                          color: col))
+
+            newVerts.append(
+                PolygonVertex(
+                    position: A,
+                    uv: .zero,
+                    color: col,
+                    polygonIDs: defaultPolyIDs
+                )
+            )
+            newVerts.append(
+                PolygonVertex(
+                    position: B,
+                    uv: .zero,
+                    color: col,
+                    polygonIDs: defaultPolyIDs
+                )
+            )
+            newVerts.append(
+                PolygonVertex(
+                    position: C,
+                    uv: .zero,
+                    color: col,
+                    polygonIDs: defaultPolyIDs
+                )
+            )
         }
-        
+
         return (newVerts, newInds)
     }
 }

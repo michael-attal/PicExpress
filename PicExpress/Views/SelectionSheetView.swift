@@ -85,6 +85,16 @@ struct SelectionSheetView<T: SelectionItem>: View {
                             Text(fillRule.rawValue)
                         }
                     }.frame(maxWidth: 350)
+
+                    Text("Pour LCA, remplissage par : ")
+                    Picker("Pour LCA, remplissage par :", selection: Binding<FillMode>(
+                        get: { appState.selectedFillMode },
+                        set: { appState.selectedFillMode = $0 }
+                    )) {
+                        ForEach(FillMode.allCases, id: \.self) { fillMode in
+                            Text(fillMode.rawValue)
+                        }
+                    }.frame(maxWidth: 350)
                 }
             }
 

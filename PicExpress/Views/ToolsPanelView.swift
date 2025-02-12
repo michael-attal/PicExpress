@@ -130,7 +130,7 @@ struct ToolsPanelView: View {
                 get: { appState.shouldFillMeshWithBackground },
                 set: { appState.shouldFillMeshWithBackground = $0 }
             )) {
-                Text("Remplir l'arrière-plan du polygone")
+                Text("Remplir l'arrière-plan")
             }
             .toggleStyle(.checkbox)
             .padding(.vertical, 4)

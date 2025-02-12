@@ -27,28 +27,21 @@ struct MainView: View {
                 onAddDocument: addDocument,
                 onDeleteDocument: deleteDocument,
                 tools: tools,
-
-                // MARK: - onPolygonPoints
-
-                // Updated to convert from [-1..1] NDC to [0..docWidth] pixel coords
                 onPolygonPoints: { newPoints, color in
                     guard let doc = appState.selectedDocument else { return }
                     guard let mainRenderer = appState.mainRenderer else { return }
 
-                    // If your input is in "normalized device coords" around [-1..1],
-                    // convert them to pixel coords:
+                    // Convert from [-1..1] coords to doc pixel coords
                     let docWidth = Double(doc.width)
                     let docHeight = Double(doc.height)
 
-                    // This maps (-1, -1) => (0, 0) and (1, 1) => (docWidth, docHeight),
-                    // so the shape is now within the full canvas.
                     let convertedPoints = newPoints.map { original -> ECTPoint in
                         let px = (original.x + 1.0) * 0.5 * docWidth
                         let py = (original.y + 1.0) * 0.5 * docHeight
                         return ECTPoint(x: px, y: py)
                     }
 
-                    // Retrieve old mesh from document if any
+                    // Load the existing mesh (if any)
                     let oldMesh = doc.loadMesh()
                     var oldVertices: [PolygonVertex] = []
                     var oldIndices: [UInt16] = []
@@ -58,11 +51,15 @@ struct MainView: View {
                         oldIndices = oi
                     }
 
-                    // Triangulate the new polygon => newVertices + newIndices
+                    let newPolyID = appState.nextPolygonID
+                    appState.nextPolygonID += 1
+
+                    // Triangulation
                     let (newVertices, newIndices) = EarClippingTriangulation.earClipOnePolygon(
                         ectPoints: convertedPoints,
                         color: color,
-                        existingVertexCount: oldVertices.count
+                        existingVertexCount: oldVertices.count,
+                        polygonID: newPolyID
                     )
 
                     // Merge old + new
@@ -74,6 +71,27 @@ struct MainView: View {
 
                     // Update renderer
                     mainRenderer.meshRenderer.updateMesh(vertices: mergedVertices, indices: mergedIndices)
+
+                    let fillColor = color.toSIMD4()
+                    let fillColorBytes = (
+                        UInt8(255 * fillColor.x),
+                        UInt8(255 * fillColor.y),
+                        UInt8(255 * fillColor.z),
+                        UInt8(255 * fillColor.w)
+                    )
+
+                    // Convert ECTPoint -> [SIMD2<Float>] to doc coords
+                    let polyFloat: [SIMD2<Float>] = convertedPoints.map {
+                        SIMD2<Float>(Float($0.x), Float($0.y))
+                    }
+
+                    mainRenderer.applyFillAlgorithm(
+                        algo: .lca,
+                        polygon: polyFloat,
+                        seed: nil,
+                        fillColor: fillColorBytes,
+                        fillRule: .evenOdd
+                    )
                 }
             )
             .navigationTitle("PicExpress")

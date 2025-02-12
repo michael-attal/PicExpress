@@ -51,7 +51,7 @@ struct PolygonToolView: View {
                 .padding(.trailing)
                 
                 Button("Appliquer") {
-                    print("Apply now!")
+                    print("Apply Création de Polygone with points: \(rawPoints)")
                     let points = parsePoints(from: rawPoints)
                     onApplyPoints(points, selectedColor)
                     dismiss()

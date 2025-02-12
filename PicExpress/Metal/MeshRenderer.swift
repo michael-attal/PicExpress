@@ -13,11 +13,17 @@ public struct PolygonVertex: Codable {
     var position: SIMD2<Float>
     var uv: SIMD2<Float>
     var color: SIMD4<Float>
+
+    /// We store up to 4 polygon IDs.
+    /// If a vertex belongs to multiple polygons, we can store them here.
+    /// Set them to -1 if unused.
+    var polygonIDs: simd_int4
 }
 
 /// A single big mesh (vertexBuffer + indexBuffer).
 /// We do one single drawIndexedPrimitives(...) in draw().
 final class MeshRenderer {
+    public var mainRenderer: MainMetalRenderer?
     private let device: MTLDevice
     private var pipelineState: MTLRenderPipelineState?
 
@@ -34,7 +40,7 @@ final class MeshRenderer {
         guard let library = library else { return }
 
         let vertexFunc = library.makeFunction(name: "vs_mesh")
-        let fragmentFunc = library.makeFunction(name: "fs_mesh")
+        let fragmentFunc = library.makeFunction(name: "fs_mesh_textured")
 
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = vertexFunc
@@ -67,6 +73,9 @@ final class MeshRenderer {
         vertexBuffer = vb
         indexBuffer = ib
         indexCount = indices.count
+
+        mainRenderer?.lastVertices = vertices
+        mainRenderer?.lastIndices = indices
     }
 
     func draw(_ encoder: MTLRenderCommandEncoder, uniformBuffer: MTLBuffer?) {
@@ -82,6 +91,12 @@ final class MeshRenderer {
         encoder.setVertexBuffer(vb, offset: 0, index: 0)
         if let ub = uniformBuffer {
             encoder.setVertexBuffer(ub, offset: 0, index: 1)
+        }
+
+        if let mainRenderer = mainRenderer,
+           let tex = mainRenderer.fillTexture
+        {
+            encoder.setFragmentTexture(tex, index: 0)
         }
 
         encoder.drawIndexedPrimitives(type: .triangle,

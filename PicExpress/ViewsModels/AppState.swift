@@ -55,11 +55,16 @@ import SwiftUI
     // The fill rule => evenOdd (pair-impair) or winding (enroulement) or both
     var selectedFillRule: FillRule = .evenOdd
 
+    /// This determines how we fill polygons on click when selectedTool == .fill & algo .lca
+    var selectedFillMode: FillMode = .triangle
+
+    var nextPolygonID: Int32 = 0
+
     /// Store or build a single big mesh in the doc + mainRenderer.
     ///
     /// - parameter polygons: an array of polygons, each polygon is a list of ECTPoint
     ///   for example if the user is making multiple shapes at once,
-    ///   or you can pass just one polygon in a list of size=1.
+    ///   or we can pass just one polygon in a list of size=1.
     /// - parameter color: SwiftUI color for the mesh.
     func storeMeshInDocument(_ polygons: [[ECTPoint]], color: Color) {
         guard let doc = selectedDocument else {
@@ -81,18 +86,16 @@ import SwiftUI
         }
         let colorVec = SIMD4<Float>(Float(red), Float(green), Float(blue), Float(alpha))
 
-        // 2) Convert your ECTPoints => arrays de SIMD2<Float>
-        //    Car mainRenderer.buildGlobalMesh(...) prend des [SIMD2<Float>]
+        // 2) Convert our ECTPoints => arrays de SIMD2<Float>
         let polygonsF: [[SIMD2<Float>]] = polygons.map { polyECT in
             polyECT.map { pt in SIMD2<Float>(Float(pt.x), Float(pt.y)) }
         }
 
         // 3) Build the big mesh => calls ear clipping, etc.
-        //    We can pick an algo de clipping if we want
         mainRenderer?.buildGlobalMesh(
             polygons: polygonsF,
-            clippingAlgorithm: selectedClippingAlgorithm, // or nil if no clipping
-            clipWindow: [], // or some polygon for window
+            clippingAlgorithm: selectedClippingAlgorithm,
+            clipWindow: [],
             color: colorVec
         )
 

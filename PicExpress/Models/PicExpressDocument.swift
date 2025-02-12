@@ -5,6 +5,7 @@
 //  Created by Michaël ATTAL on 10/01/2025.
 //
 
+import AppKit
 import Foundation
 import SwiftData
 
@@ -36,6 +37,8 @@ public final class PicExpressDocument {
     /// If we want to store the merged mesh as Data:
     /// For example, a JSON with vertices + indices
     var meshData: Data?
+
+    var fillTexturePNG: Data?
 
     init(
         name: String,
@@ -74,9 +77,56 @@ public final class PicExpressDocument {
             return nil
         }
     }
+
+    public func saveFillTexture(_ buffer: [UInt8], width: Int, height: Int) {
+        guard let cgImage = Utils.makeCGImageRGBA8(
+            from: buffer,
+            width: width,
+            height: height
+        ) else {
+            return
+        }
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
+        guard let tiffData = nsImage.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiffData),
+              let pngData = rep.representation(using: .png, properties: [:])
+        else {
+            return
+        }
+        self.fillTexturePNG = pngData
+        print("Doc => fillTexturePNG updated.")
+    }
+
+    public func loadFillTexture() -> [UInt8]? {
+        guard let pngData = self.fillTexturePNG else {
+            return nil
+        }
+        guard let nsImage = NSImage(data: pngData),
+              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else {
+            print("Error decoding fillTexturePNG => no cgImage")
+            return nil
+        }
+        let w = cgImage.width
+        let h = cgImage.height
+        var buf = [UInt8](repeating: 0, count: w*h*4)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: &buf,
+                                  width: w,
+                                  height: h,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: w*4,
+                                  space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            return nil
+        }
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return buf
+    }
 }
 
-/// A container structure if you wish to encode the entire big mesh
+/// A container structure if we wish to encode the entire big mesh
 private struct SavedMesh: Codable {
     let vertices: [PolygonVertex]
     let indices: [UInt16]

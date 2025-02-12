@@ -16,8 +16,6 @@ struct MetalCanvasView: NSViewRepresentable {
 
     @Environment(AppState.self) private var appState
 
-    // MARK: - makeCoordinator
-
     func makeCoordinator() -> Coordinator {
         Coordinator(
             zoom: $zoom,
@@ -25,8 +23,6 @@ struct MetalCanvasView: NSViewRepresentable {
             appState: appState
         )
     }
-
-    // MARK: - makeNSView
 
     func makeNSView(context: Context) -> MTKView {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -42,6 +38,7 @@ struct MetalCanvasView: NSViewRepresentable {
             width: appState.selectedDocument?.width ?? 512,
             height: appState.selectedDocument?.height ?? 512
         )
+        mr.appState = appState
         mtkView.delegate = mr
 
         // Store references
@@ -49,7 +46,6 @@ struct MetalCanvasView: NSViewRepresentable {
         context.coordinator.mainRenderer = mr
         mtkView.coordinator = context.coordinator
 
-        // Place in AppState
         DispatchQueue.main.async {
             self.appState.mainRenderer = mr
             self.appState.mainCoordinator = context.coordinator
@@ -75,7 +71,6 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        // Configure clearColor, etc.
         mtkView.clearColor = appState.selectedBackgroundColor.toMTLClearColor()
         mtkView.enableSetNeedsDisplay = true
         mtkView.isPaused = false
@@ -101,8 +96,6 @@ struct MetalCanvasView: NSViewRepresentable {
         return mtkView
     }
 
-    // MARK: - updateNSView
-
     func updateNSView(_ nsView: MTKView, context: Context) {
         // Update transform, color, etc.
         context.coordinator.mainRenderer?.previewColor = appState.selectedColor.toSIMD4()
@@ -125,7 +118,6 @@ struct MetalCanvasView: NSViewRepresentable {
 
         var panGesture: NSPanGestureRecognizer?
 
-        /// Initialize with references to zoom and panOffset (two-way bindings), plus the global AppState.
         init(
             zoom: Binding<CGFloat>,
             panOffset: Binding<CGSize>,
@@ -196,12 +188,10 @@ struct MetalCanvasView: NSViewRepresentable {
             // So we solve in the same manner, or do direct approach:
             // We'll consider "half = s" => the doc extends from -s..+s in NDC. We want it inside -1..+1.
             let half = s
-            // minVal = ( half - 1 ) / 2
-            // maxVal = ( 1 - half ) / 2
             let minVal = (half - 1.0) / 2.0
             let maxVal = (1.0 - half) / 2.0
             // Possibly minVal > maxVal if s>1 => reorder them
-            let rmin = min(minVal, maxVal) // could be negative
+            let rmin = min(minVal, maxVal)
             let rmax = max(minVal, maxVal)
 
             var newOffset = offset
@@ -279,46 +269,177 @@ struct MetalCanvasView: NSViewRepresentable {
             mainRenderer?.setZoomAndPan(zoom: zoom, panOffset: panOffset)
         }
 
-        // MARK: - Mouse & keyboard placeholders
+        // MARK: - Mouse & keyboard
 
-        /// Called when the user clicks the left mouse button
+        func convertClickToDocumentCoords(pt: NSPoint, view: NSView, renderer: MainMetalRenderer, document: PicExpressDocument) -> (Float, Float)? {
+            let viewSize = view.bounds.size
+            if viewSize.width <= 0 || viewSize.height <= 0 { return nil }
+
+            let ndcX = Float((pt.x / viewSize.width) * 2.0 - 1.0)
+            let ndcY = Float((pt.y / viewSize.height) * 2.0 - 1.0)
+            let ndcPos = simd_float4(ndcX, ndcY, 0, 1)
+
+            let invTransform = simd_inverse(renderer.currentTransform)
+            let docNdcPos = invTransform * ndcPos
+
+            let docW = Float(document.width)
+            let docH = Float(document.height)
+
+            let docNdcX = docNdcPos.x / docNdcPos.w
+            let docNdcY = docNdcPos.y / docNdcPos.w
+
+            let px = (docNdcX + 1) * 0.5 * docW
+            let py = (docNdcY + 1) * 0.5 * docH
+
+            print("""
+            [mouseClicked - convertClickToDocumentCoords] 
+              - view coords = (\(pt.x), \(pt.y))
+              - ndc = (\(ndcX), \(ndcY))
+              - docNdc = (\(docNdcX), \(docNdcY))
+              - doc coords float = (\(px), \(py))
+            """)
+
+            return (px, py)
+        }
+
         func mouseClicked(at pt: NSPoint, in view: NSView) {
             guard let tool = appState.selectedTool else { return }
+            guard let mr = mainRenderer else { return }
+            guard let doc = appState.selectedDocument else { return }
+
             switch tool {
             case .addPolygonFromClick:
-                guard let mr = mainRenderer else { return }
-                guard let doc = appState.selectedDocument else { return }
+                guard let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) else { return }
 
-                let viewSize = view.bounds.size
-                if viewSize.width <= 0 || viewSize.height <= 0 { return }
-
-                // Convert to NDC [-1..1], with no Y inversion:
-                let ndcX = Float((pt.x / viewSize.width) * 2.0 - 1.0)
-                let ndcY = Float((pt.y / viewSize.height) * 2.0 - 1.0)
-                let ndcPos = simd_float4(ndcX, ndcY, 0, 1)
-
-                // Invert the renderer's transform
-                let invTransform = simd_inverse(mr.currentTransform)
-                let docNdcPos = invTransform * ndcPos
-
-                // docNdc => pixel coords
-                let docW = Float(doc.width)
-                let docH = Float(doc.height)
-
-                let docNdcX = docNdcPos.x / docNdcPos.w
-                let docNdcY = docNdcPos.y / docNdcPos.w
-
-                let px = (docNdcX + 1) * 0.5 * docW
-                let py = (docNdcY + 1) * 0.5 * docH
+                print("In addPolygonFromClick tool, clicked at (\(px), \(py))")
 
                 let newPoint = ECTPoint(x: Double(px), y: Double(py))
                 appState.lassoPoints.append(newPoint)
-
-                // Update preview
                 mr.updatePreviewPoints(appState.lassoPoints)
 
+            case .fill:
+                guard let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) else { return }
+
+                print("In fill tool, clicked at (\(px), \(py))")
+
+                let ix = Int(px.rounded())
+                let iy = Int(py.rounded())
+
+                guard let (allVerts, allIndices) = mr.exportCurrentMesh() else {
+                    print(">>> Warning: exportCurrentMesh return nil")
+                    return
+                }
+                print("Found \(allVerts.count) vertices and \(allIndices.count) indices")
+
+                let clickPos = SIMD2<Float>(Float(px), Float(py))
+
+                var foundTri: (PolygonVertex, PolygonVertex, PolygonVertex)? = nil
+                var foundTriIndices: (UInt16, UInt16, UInt16)? = nil
+
+                let n = allIndices.count
+                var i = 0
+                while i < n {
+                    let iA = allIndices[i]
+                    let iB = allIndices[i + 1]
+                    let iC = allIndices[i + 2]
+
+                    let A = allVerts[Int(iA)]
+                    let B = allVerts[Int(iB)]
+                    let C = allVerts[Int(iC)]
+
+                    if mr.pointInTriangle(p: clickPos, a: A.position, b: B.position, c: C.position) {
+                        print("FOUND triangle at indices \(iA),\(iB),\(iC)")
+                        foundTri = (A, B, C)
+                        foundTriIndices = (iA, iB, iC)
+                        break
+                    }
+                    i += 3
+                }
+
+                guard let (vA, vB, vC) = foundTri else {
+                    print("No triangle found under click => no fill done")
+                    return
+                }
+
+                let selectedFillColor = appState.selectedColor.toSIMD4()
+                let fillColor = (
+                    UInt8(255 * selectedFillColor.x),
+                    UInt8(255 * selectedFillColor.y),
+                    UInt8(255 * selectedFillColor.z),
+                    UInt8(255 * selectedFillColor.w)
+                )
+
+                if appState.selectedFillAlgorithm == .lca {
+                    switch appState.selectedFillMode {
+                    case .triangle:
+                        let triPoly: [SIMD2<Float>] = [vA.position, vB.position, vC.position]
+                        mr.applyFillAlgorithm(
+                            algo: .lca,
+                            polygon: triPoly,
+                            seed: nil,
+                            fillColor: fillColor,
+                            fillRule: appState.selectedFillRule
+                        )
+
+                    case .polygon:
+                        let pid = vA.polygonIDs.x
+                        if pid < 0 {
+                            print("No valid polygonID => fill only the triangle.")
+                            let triPoly: [SIMD2<Float>] = [vA.position, vB.position, vC.position]
+                            mr.applyFillAlgorithm(
+                                algo: .lca,
+                                polygon: triPoly,
+                                seed: nil,
+                                fillColor: fillColor,
+                                fillRule: appState.selectedFillRule
+                            )
+                            return
+                        }
+
+                        var allPolygonsTris: [[SIMD2<Float>]] = []
+
+                        i = 0
+                        while i < n {
+                            let iA = allIndices[i]
+                            let iB = allIndices[i + 1]
+                            let iC = allIndices[i + 2]
+                            let A = allVerts[Int(iA)]
+                            let B = allVerts[Int(iB)]
+                            let C = allVerts[Int(iC)]
+
+                            let matchA = (A.polygonIDs.x == pid || A.polygonIDs.y == pid || A.polygonIDs.z == pid || A.polygonIDs.w == pid)
+                            let matchB = (B.polygonIDs.x == pid || B.polygonIDs.y == pid || B.polygonIDs.z == pid || B.polygonIDs.w == pid)
+                            let matchC = (C.polygonIDs.x == pid || C.polygonIDs.y == pid || C.polygonIDs.z == pid || C.polygonIDs.w == pid)
+
+                            if matchA || matchB || matchC {
+                                let poly = [A.position, B.position, C.position]
+                                allPolygonsTris.append(poly)
+                            }
+                            i += 3
+                        }
+
+                        for tri in allPolygonsTris {
+                            mr.applyFillAlgorithm(
+                                algo: .lca,
+                                polygon: tri,
+                                seed: nil,
+                                fillColor: fillColor,
+                                fillRule: appState.selectedFillRule
+                            )
+                        }
+                    }
+                } else {
+                    // seed fill => (.seedRecursive, .seedStack, .scanline)
+                    mr.applyFillAlgorithm(
+                        algo: appState.selectedFillAlgorithm,
+                        polygon: [],
+                        seed: (ix, iy),
+                        fillColor: fillColor,
+                        fillRule: appState.selectedFillRule
+                    )
+                }
+
             default:
-                // For other tools, do nothing or custom logic
                 break
             }
         }
@@ -331,16 +452,15 @@ struct MetalCanvasView: NSViewRepresentable {
             // finalize shape or something
         }
 
-        /// Called when user presses Enter
         func keyPressedEnter() {
             guard let tool = appState.selectedTool else { return }
             switch tool {
             case .addPolygonFromClick:
-                // If at least 3 points => triangulate
                 if appState.lassoPoints.count >= 3 {
                     guard let doc = appState.selectedDocument else { return }
                     guard let mr = mainRenderer else { return }
 
+                    // 1) Charger ancien mesh
                     let oldMesh = doc.loadMesh()
                     var oldVertices: [PolygonVertex] = []
                     var oldIndices: [UInt16] = []
@@ -349,21 +469,49 @@ struct MetalCanvasView: NSViewRepresentable {
                         oldIndices = oi
                     }
 
+                    // 2) Triangulation
+                    let polyID = appState.nextPolygonID
+                    appState.nextPolygonID += 1
+
                     let color = appState.selectedColor
                     let (newVertices, newIndices) = EarClippingTriangulation.earClipOnePolygon(
                         ectPoints: appState.lassoPoints,
                         color: color,
-                        existingVertexCount: oldVertices.count
+                        existingVertexCount: oldVertices.count,
+                        polygonID: polyID
                     )
 
+                    // 3) Merge
                     let mergedVertices = oldVertices + newVertices
                     let mergedIndices = oldIndices + newIndices
 
+                    // 4) Save doc
                     doc.saveMesh(mergedVertices, mergedIndices)
-                    mr.meshRenderer.updateMesh(vertices: mergedVertices, indices: mergedIndices)
-                }
 
-                // Clear the lassoPoints + preview
+                    // 5) Update renderer
+                    mr.meshRenderer.updateMesh(vertices: mergedVertices, indices: mergedIndices)
+
+                    // 6) Fill auto => on applique un fill LCA pour voir la forme en fillTexture
+                    let fillC = color.toSIMD4()
+                    let fillBytes = (
+                        UInt8(255 * fillC.x),
+                        UInt8(255 * fillC.y),
+                        UInt8(255 * fillC.z),
+                        UInt8(255 * fillC.w)
+                    )
+                    // convert lassoPoints => doc coords [SIMD2<Float>]
+                    let polyFloat: [SIMD2<Float>] = appState.lassoPoints.map {
+                        SIMD2<Float>(Float($0.x), Float($0.y))
+                    }
+
+                    mr.applyFillAlgorithm(
+                        algo: .lca,
+                        polygon: polyFloat,
+                        seed: nil,
+                        fillColor: fillBytes,
+                        fillRule: .evenOdd
+                    )
+                }
                 appState.lassoPoints.removeAll()
                 mainRenderer?.updatePreviewPoints([])
 

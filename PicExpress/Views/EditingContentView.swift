@@ -11,6 +11,7 @@ import SwiftUI
 
 enum RendererOptions: String, CaseIterable, Identifiable {
     case defaultMesh = "Par défaut (Mesh unique)"
+    case pointPreview = "Apperçu des points"
 
     var id: String { rawValue }
 }
@@ -75,7 +76,7 @@ struct EditingContentView: View {
                         }
                         .padding(.leading, 8)
 
-                        // A Menu picker to show/hide some renderer (like the triangle renderer test)
+                        // A Menu picker to show/hide some renderer
                         Menu {
                             ForEach(RendererOptions.allCases) { option in
                                 Button {
@@ -97,11 +98,33 @@ struct EditingContentView: View {
         }
         .onChange(of: document) {
             clearPreviousMesh()
-            loadMeshFromDocument()
+            loadMeshAndTextureFromDocument()
         }
         .task {
             // Load and display the mesh when the view appears (and also on doc change)
-            loadMeshFromDocument()
+            loadMeshAndTextureFromDocument()
+        }
+    }
+
+    private func loadMeshAndTextureFromDocument() {
+        guard let mainRenderer = appState.mainRenderer else {
+            print("No mainRenderer => cannot load anything.")
+            return
+        }
+        mainRenderer.meshRenderer.updateMesh(vertices: [], indices: [])
+
+        if let (vertices, indices) = document.loadMesh() {
+            mainRenderer.meshRenderer.updateMesh(vertices: vertices, indices: indices)
+            print("Mesh loaded from doc => updated in mainRenderer.")
+        } else {
+            print("No mesh found in doc => using empty mesh.")
+        }
+
+        if let buf = document.loadFillTexture() {
+            mainRenderer.reloadCPUBuf(buf)
+            print("Reloaded fillTexture from doc.")
+        } else {
+            print("No fillTexturePNG => fillTexture is black by default.")
         }
     }
 

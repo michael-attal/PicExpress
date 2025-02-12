@@ -14,15 +14,14 @@ struct TransformUniforms {
     var polygonColor: SIMD4<Float>
     var docWidth: Float
     var docHeight: Float
-    /// We added a zoomFactor so that other shaders (e.g. PointsPreview) can
-    /// adapt their rendering (like pointSize) depending on the current zoom.
     var zoomFactor: Float = 1.0
     var _padding: SIMD2<Float> = .zero
 }
 
-/// This class is the main renderer for your project. It handles:
+/// This class is the main renderer for the project. It handles:
 /// - A single big mesh (MeshRenderer) for all polygons
 /// - CPU-based fill (seed, scanline, LCA) in a texture, using a buffer
+/// - A fill texture that displays the rendering
 /// - Zoom/pan transform
 public final class MainMetalRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
@@ -31,7 +30,7 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
     // The big mesh renderer
     let meshRenderer: MeshRenderer
 
-    // Optionally keep your points preview
+    // Optionally keep our points preview
     let pointsRenderer: PointsPreviewRenderer?
 
     private var uniformBuffer: MTLBuffer?
@@ -47,15 +46,14 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
     let texHeight: Int
 
     // For CPU-based fill usage
-    private var fillTexture: MTLTexture?
+    public var fillTexture: MTLTexture?
     private var cpuBuffer: [UInt8] = []
 
     // Zoom/pan
     private var zoom: Float = 1.0
     private var pan: SIMD2<Float> = .zero
 
-    /// Expose the final transform so we can invert it in the Coordinator
-    /// to place points accurately under the mouse even when zoomed/panned.
+    // Expose the final transform so we can invert it in the Coordinator
     public private(set) var currentTransform: float4x4 = matrix_identity_float4x4
 
     // This color is for preview or uniform
@@ -63,8 +61,10 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - Storing the last mesh for export
 
-    private var _lastVertices: [PolygonVertex] = []
-    private var _lastIndices: [UInt16] = []
+    var lastVertices: [PolygonVertex] = []
+    var lastIndices: [UInt16] = []
+
+    weak var appState: AppState?
 
     // MARK: - Init
 
@@ -83,6 +83,7 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         super.init()
 
+        meshRenderer.mainRenderer = self
         self.commandQueue = dev.makeCommandQueue()
         buildResources()
     }
@@ -90,13 +91,11 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - Build resources
 
     private func buildResources() {
-        // Create the uniform buffer
         uniformBuffer = device.makeBuffer(length: MemoryLayout<TransformUniforms>.size,
                                           options: [])
         uniforms.docWidth = Float(texWidth)
         uniforms.docHeight = Float(texHeight)
 
-        // Create fillTexture => doc size
         let desc = MTLTextureDescriptor()
         desc.pixelFormat = .rgba8Unorm
         desc.width = texWidth
@@ -105,22 +104,19 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
         desc.storageMode = .managed
         fillTexture = device.makeTexture(descriptor: desc)
 
-        // CPU buffer for fill
         cpuBuffer = [UInt8](repeating: 0, count: texWidth * texHeight * 4)
         for i in 0 ..< (texWidth * texHeight) {
             let idx = i * 4
-            cpuBuffer[idx+0] = 0 // R
-            cpuBuffer[idx+1] = 0 // G
-            cpuBuffer[idx+2] = 0 // B
-            cpuBuffer[idx+3] = 255 // A
+            cpuBuffer[idx+0] = 0
+            cpuBuffer[idx+1] = 0
+            cpuBuffer[idx+2] = 0
+            cpuBuffer[idx+3] = 255
         }
         updateFillTextureCPU(cpuBuffer)
     }
 
     // MARK: - Big mesh usage
 
-    /// Build the big mesh from user polygons. Optionally do a clipping with a given algorithm.
-    /// Then we ear-clip everything, gather triangles, create a single vertex/index buffer.
     @MainActor
     public func buildGlobalMesh(polygons: [[SIMD2<Float>]],
                                 clippingAlgorithm: AvailableClippingAlgorithm?,
@@ -131,8 +127,6 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         for poly in polygons {
             guard poly.count >= 3 else { continue }
-
-            // 1) Do clipping if needed
             let clippedPoly: [SIMD2<Float>]
             switch clippingAlgorithm {
             case .cyrusBeck:
@@ -143,7 +137,6 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
                 clippedPoly = poly
             }
 
-            // 2) Ear clipping => produce triangles
             let earClip = EarClippingTriangulation()
             let ectPoly = ECTPolygon(vertices: clippedPoly.map {
                 ECTPoint(x: Double($0.x), y: Double($0.y))
@@ -152,10 +145,13 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
             finalTriangles.append(contentsOf: triList)
         }
 
-        // Build the final big mesh
         var vertices: [PolygonVertex] = []
         var indices: [UInt16] = []
         var currentIndex: UInt16 = 0
+
+        // Suppose we assign the same polygonID=0 for all in this example:
+        // (In a real scenario, we might pass different IDs per polygon).
+        let polygonID: Int32 = 0
 
         for tri in finalTriangles {
             let iA = currentIndex
@@ -171,61 +167,58 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
             let B = SIMD2<Float>(Float(tri.b.x), Float(tri.b.y))
             let C = SIMD2<Float>(Float(tri.c.x), Float(tri.c.y))
 
+            let defaultIDs = simd_int4(polygonID, -1, -1, -1)
+
             vertices.append(
                 PolygonVertex(
                     position: A,
                     uv: .zero,
-                    color: color
+                    color: color,
+                    polygonIDs: defaultIDs
                 )
             )
             vertices.append(
                 PolygonVertex(
                     position: B,
                     uv: .zero,
-                    color: color
+                    color: color,
+                    polygonIDs: defaultIDs
                 )
             )
             vertices.append(
                 PolygonVertex(
                     position: C,
                     uv: .zero,
-                    color: color
+                    color: color,
+                    polygonIDs: defaultIDs
                 )
             )
         }
 
-        // Update the meshRenderer
         meshRenderer.updateMesh(vertices: vertices, indices: indices)
 
-        // Store these arrays for potential export
-        _lastVertices = vertices
-        _lastIndices = indices
+        lastVertices = vertices
+        lastIndices = indices
     }
 
     // MARK: - Exporting the current mesh
 
-    /// Returns the last built mesh (vertices + indices) if it exists.
     public func exportCurrentMesh() -> ([PolygonVertex], [UInt16])? {
-        guard !_lastVertices.isEmpty, !_lastIndices.isEmpty else {
+        guard !lastVertices.isEmpty, !lastIndices.isEmpty else {
             return nil
         }
-        return (_lastVertices, _lastIndices)
+        return (lastVertices, lastIndices)
     }
 
     // MARK: - CPU fill usage
 
-    /// Calls one of the 4 fill algorithms (seed recursive, seed stack, scanline, LCA) on cpuBuffer,
-    /// then re-uploads to fillTexture.
-    /// - polygon is used for LCA
-    /// - seed is used for the germ-based approaches
-    public func applyFillAlgorithm(
+    @MainActor public func applyFillAlgorithm(
         algo: AvailableFillAlgorithm,
         polygon: [SIMD2<Float>],
         seed: (Int, Int)?,
+        fillColor: (UInt8, UInt8, UInt8, UInt8),
         fillRule: FillRule
     ) {
-        let fillColor: (UInt8, UInt8, UInt8, UInt8) = (255, 0, 0, 255) // Example: red
-
         switch algo {
         case .seedRecursive:
             if let s = seed {
@@ -249,7 +242,6 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
                                             target, fillColor)
             }
         case .lca:
-            // fill the entire polygon
             FillAlgorithms.fillPolygonLCA(
                 polygon: polygon,
                 pixels: &cpuBuffer,
@@ -261,9 +253,14 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
         }
 
         updateFillTextureCPU(cpuBuffer)
+        if let doc = appState?.selectedDocument {
+            doc.saveFillTexture(cpuBuffer, width: texWidth, height: texHeight)
+            print("Texture saved.")
+        } else {
+            print("No document selected to save fill texture.")
+        }
     }
 
-    /// Re-upload CPU buffer to fillTexture
     public func updateFillTextureCPU(_ buf: [UInt8]) {
         guard let tex = fillTexture else { return }
         tex.replace(
@@ -276,7 +273,6 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - Zoom & Pan
 
-    /// Called by the Coordinator to set the zoom and panOffset.
     public func setZoomAndPan(zoom: CGFloat, panOffset: CGSize) {
         self.zoom = Float(zoom)
         pan.x = Float(panOffset.width)
@@ -299,10 +295,7 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         let encoder = cmdBuff.makeRenderCommandEncoder(descriptor: rpd)!
 
-        // Draw the big mesh
         meshRenderer.draw(encoder, uniformBuffer: uniformBuffer)
-
-        // Optionally draw preview points
         pointsRenderer?.draw(encoder: encoder, uniformBuffer: uniformBuffer)
 
         encoder.endEncoding()
@@ -310,13 +303,8 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
         cmdBuff.commit()
     }
 
-    /// This function updates `uniforms.transform` with translation * scale,
-    /// sets `uniforms.zoomFactor`, and copies the data to the GPU buffer.
     private func updateUniforms() {
-        // Zoom factor
         let s = zoom
-
-        // Build scale matrix
         let scaleMatrix = float4x4(
             simd_float4(s, 0, 0, 0),
             simd_float4(0, s, 0, 0),
@@ -324,7 +312,6 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
             simd_float4(0, 0, 0, 1)
         )
 
-        // Convert panOffset to a [-1..1] range shift
         let tx = pan.x * 2.0
         let ty = -pan.y * 2.0
         let translationMatrix = float4x4(
@@ -338,22 +325,53 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
         uniforms.transform = finalTransform
         uniforms.polygonColor = previewColor
-        uniforms.zoomFactor = s // We store the actual zoom in the uniform
-
-        // Keep a copy so the Coordinator can invert it
+        uniforms.zoomFactor = s
         currentTransform = finalTransform
 
         if let ub = uniformBuffer {
             memcpy(ub.contents(), &uniforms, MemoryLayout<TransformUniforms>.size)
         }
     }
+
+    // MARK: - pointInTriangle helper
+
+    /// Return true if p is inside triangle ABC (2D).
+    public func pointInTriangle(
+        p: SIMD2<Float>,
+        a: SIMD2<Float>,
+        b: SIMD2<Float>,
+        c: SIMD2<Float>
+    ) -> Bool {
+        let v0 = c - a
+        let v1 = b - a
+        let v2 = p - a
+
+        let dot00 = simd_dot(v0, v0)
+        let dot01 = simd_dot(v0, v1)
+        let dot02 = simd_dot(v0, v2)
+        let dot11 = simd_dot(v1, v1)
+        let dot12 = simd_dot(v1, v2)
+
+        let invDenom = 1.0 / (dot00 * dot11 - dot01 * dot01)
+        let u = (dot11 * dot02 - dot01 * dot12) * invDenom
+        let v = (dot00 * dot12 - dot01 * dot02) * invDenom
+
+        return (u >= 0) && (v >= 0) && (u+v <= 1)
+    }
 }
 
 public extension MainMetalRenderer {
-    /// Update the points preview in the PointsPreviewRenderer.
-    /// We pass an array of ECTPoint in pixel coords (doc coords),
-    /// then the GPU will convert them to clip space in the vs_points_preview shader.
     func updatePreviewPoints(_ ectPoints: [ECTPoint]) {
         pointsRenderer?.updatePreviewPoints(ectPoints)
+    }
+
+    func reloadCPUBuf(_ newBuf: [UInt8]) {
+        if newBuf.count == cpuBuffer.count {
+            cpuBuffer = newBuf
+            updateFillTextureCPU(cpuBuffer)
+            print("Reloaded CPU buffer from doc.")
+        } else {
+            print("Error: mismatch in buffer size => cannot reload")
+        }
     }
 }
