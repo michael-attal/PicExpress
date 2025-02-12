@@ -1,5 +1,7 @@
 # **PicExpress : Polygon Clipping & Filling (Math Project)**
 
+![Image.png](./readme-screenshot.png)
+
 This application demonstrates polygon **clipping** (Cyrus-Beck, Sutherland-Hodgman, and concave-window clipping via ear clipping) and **filling** (seed-fill, scanline, LCA) in Swift 6 using Metal and SwiftUI.
 
 It was originally developed as a **Math course project** on geometric algorithms.
