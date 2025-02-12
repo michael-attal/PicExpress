@@ -28,7 +28,7 @@ struct EditingContentView: View {
     @State private var zoom: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
 
-    @State private var selectedRenderers: Set<RendererOptions> = [.defaultMesh]
+    @State private var selectedRenderers: Set<RendererOptions> = [.defaultMesh, .pointPreview]
 
     var body: some View {
         VStack(spacing: 0) {
