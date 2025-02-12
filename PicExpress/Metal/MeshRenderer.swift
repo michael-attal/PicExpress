@@ -78,7 +78,7 @@ final class MeshRenderer {
         mainRenderer?.lastIndices = indices
     }
 
-    func draw(_ encoder: MTLRenderCommandEncoder, uniformBuffer: MTLBuffer?) {
+    @MainActor func draw(_ encoder: MTLRenderCommandEncoder, uniformBuffer: MTLBuffer?) {
         guard let pipeline = pipelineState,
               let vb = vertexBuffer,
               let ib = indexBuffer,
@@ -86,7 +86,7 @@ final class MeshRenderer {
         else {
             return
         }
-
+        encoder.setTriangleFillMode(mainRenderer?.appState?.shouldFillMeshWithBackground ?? true ? .fill : .lines)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBuffer(vb, offset: 0, index: 0)
         if let ub = uniformBuffer {

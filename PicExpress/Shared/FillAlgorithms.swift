@@ -7,16 +7,6 @@
 
 import SwiftUI
 
-/// For LCA filling
-public enum FillMode: String, Identifiable, CaseIterable, Sendable, SelectionItem {
-    public var id: String { rawValue }
-
-    case triangle = "Triangle" // Fill only the single triangle that was clicked
-    case polygon = "Polygon" // Fill the entire polygon to which that triangle belongs - Done because I added a PolygonID in each vertex (in PolygonVertex)
-
-    public var description: String { rawValue }
-}
-
 /// Enumeration of fill algorithms
 public enum AvailableFillAlgorithm: String, Identifiable, CaseIterable, Sendable, SelectionItem {
     public var id: String { rawValue }

@@ -100,3 +100,9 @@ extension Color {
         return MTLClearColorMake(Double(r), Double(g), Double(b), Double(a))
     }
 }
+
+extension simd_int4 {
+    func contains(_ value: Int32) -> Bool {
+        return x == value || y == value || z == value || w == value
+    }
+}

@@ -14,7 +14,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
     case freeMove
     case fill
     case shapes
-    // case eraser
+    case eraser
     case cut
     // case resize
     case addPolygonList
@@ -26,11 +26,11 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .freeMove: return "Déplacement libre"
         case .fill: return "Remplissage"
         case .shapes: return "Formes"
-        // case .eraser: return "Gomme"
+        case .eraser: return "Gomme"
         case .cut: return "Découpage"
         // case .resize: return "Redimensionnement"
-        case .addPolygonList: return "Ajout de polygone par une liste de points"
-        case .addPolygonFromClick: return "Ajout de polygone par clic dans le mesh"
+        case .addPolygonList: return "Polygone par liste de points"
+        case .addPolygonFromClick: return "Polygone par clic"
         }
     }
 
@@ -40,7 +40,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .freeMove: return "hand.draw"
         case .fill: return "drop.fill"
         case .shapes: return "square.on.circle"
-        // case .eraser: "eraser"
+        case .eraser: return "eraser"
         case .cut: return "lasso"
         // case .resize: return "hand.point.up.braille"
         case .addPolygonList: return "hexagon.fill"
@@ -60,6 +60,15 @@ public enum ShapeType: String, CaseIterable, Sendable, SelectionItem {
     case circle = "Cercle"
     case ellipse = "Ellipse"
     case triangle = "Triangle"
+
+    public var description: String { rawValue }
+}
+
+public enum DetectionMode: String, Identifiable, CaseIterable, Sendable, SelectionItem {
+    public var id: String { rawValue }
+
+    case triangle = "Triangle" // Fill/erase only the single triangle that was clicked
+    case polygon = "Polygon" // Fill/erase the entire polygon to which that triangle belongs - Done because I added a PolygonID in each vertex (in PolygonVertex)
 
     public var description: String { rawValue }
 }
@@ -136,6 +145,15 @@ struct ToolsPanelView: View {
             }
             .toggleStyle(.checkbox)
             .padding(.vertical, 4)
+
+            Picker("Mode de détection :", selection: Binding<DetectionMode>(
+                get: { appState.selectedDetectionMode },
+                set: { appState.selectedDetectionMode = $0 }
+            )) {
+                ForEach(DetectionMode.allCases, id: \.self) { fillMode in
+                    Text(fillMode.rawValue)
+                }
+            }.frame(maxWidth: 350)
 
             // List of tools (buttons)
             ForEach(tools) { tool in

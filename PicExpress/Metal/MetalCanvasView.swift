@@ -172,7 +172,7 @@ struct MetalCanvasView: NSViewRepresentable {
             // ratioH = how much we can zoom so docHeight <= viewHeight
             let ratioH = viewH / docH
             // We pick the smallest => doc fully fits in the view
-            let maxZoom = min(ratioW, ratioH)
+            let maxZoom = min(ratioW, ratioH)*8.0
 
             let minZoom: CGFloat = 0.1
             let clamped = max(minZoom, min(newZoom, maxZoom))
@@ -351,6 +351,11 @@ struct MetalCanvasView: NSViewRepresentable {
                     isShapeDrawing = true
                     shapePreviewPoints.removeAll()
                     mr.updatePreviewPoints([])
+                }
+
+            case .eraser:
+                if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
+                    handleEraserClick(px: px, py: py, renderer: mr)
                 }
 
             default:
@@ -618,7 +623,7 @@ struct MetalCanvasView: NSViewRepresentable {
             )
 
             if appState.selectedFillAlgorithm == .lca {
-                switch appState.selectedFillMode {
+                switch appState.selectedDetectionMode {
                 case .triangle:
                     let triPoly = [vA.position, vB.position, vC.position]
                     renderer.applyFillAlgorithm(algo: .lca,
@@ -682,6 +687,208 @@ struct MetalCanvasView: NSViewRepresentable {
                                             fillColor: fillColor,
                                             fillRule: appState.selectedFillRule)
             }
+        }
+
+        private func handleEraserClick(px: Float, py: Float, renderer: MainMetalRenderer) {
+            let ix = Int(px.rounded())
+            let iy = Int(py.rounded())
+
+            // 1) Retrieve the current mesh
+            guard let (allVerts, allIndices) = renderer.exportCurrentMesh() else {
+                print("Eraser: no mesh => nothing to erase")
+                return
+            }
+
+            // 2) Find which triangle is clicked
+            let clickPos = SIMD2<Float>(px, py)
+            var foundTriIndex: Int? = nil // index dans allIndices
+            var foundTriVertices: (PolygonVertex, PolygonVertex, PolygonVertex)? = nil
+
+            var i = 0
+            while i < allIndices.count {
+                let iA = allIndices[i]
+                let iB = allIndices[i+1]
+                let iC = allIndices[i+2]
+                let A = allVerts[Int(iA)]
+                let B = allVerts[Int(iB)]
+                let C = allVerts[Int(iC)]
+
+                if renderer.pointInTriangle(p: clickPos, a: A.position, b: B.position, c: C.position) {
+                    foundTriIndex = i
+                    foundTriVertices = (A, B, C)
+                    break
+                }
+                i += 3
+            }
+
+            guard let triBaseIndex = foundTriIndex,
+                  let (vA, vB, vC) = foundTriVertices
+            else {
+                print("Eraser: no triangle found under click => nothing to remove.")
+                return
+            }
+
+            // 3) Depending on the deletion mode
+            // - .triangle => delete ONLY this triangle from the mesh
+            // - .polygon => delete ALL triangles with this triangle's polygonID
+            let eraserMode = appState.selectedDetectionMode // .triangle or .polygon
+
+            let oldVertices = allVerts
+            let oldIndices = allIndices
+
+            // Nouveau tableau "filtré"
+            var newVertices: [PolygonVertex] = []
+            var newIndices: [UInt16] = []
+
+            switch eraserMode {
+            case .triangle:
+                // We'll rebuild the list of triangles, skipping only the one we've found.
+                // triBaseIndex, triBaseIndex+1, triBaseIndex+2
+                (newVertices, newIndices) = removeOneTriangle(
+                    oldVertices: oldVertices,
+                    oldIndices: oldIndices,
+                    triangleBaseIndex: triBaseIndex
+                )
+
+            case .polygon:
+                // The polygon ID is retrieved from vA, vB, vC. Assume we take vA.polygonIDs.x
+                let polygonID = vA.polygonIDs.x
+                if polygonID < 0 {
+                    // no ID => just delete this triangle
+                    (newVertices, newIndices) = removeOneTriangle(
+                        oldVertices: oldVertices,
+                        oldIndices: oldIndices,
+                        triangleBaseIndex: triBaseIndex
+                    )
+                } else {
+                    (newVertices, newIndices) = removePolygon(
+                        oldVertices: oldVertices,
+                        oldIndices: oldIndices,
+                        polygonIDtoRemove: polygonID
+                    )
+                }
+            }
+
+            // 4) Saving the new mesh in the document
+            guard let doc = appState.selectedDocument else { return }
+            doc.saveMesh(newVertices, newIndices)
+
+            // 5) GPU mesh update
+            renderer.meshRenderer.updateMesh(vertices: newVertices, indices: newIndices)
+
+            // 6) Rebuild the (emptied) cpuBuffer, then fill in for each remaining triangle
+            let w = renderer.texWidth
+            let h = renderer.texHeight
+
+            // Empty the CPU buffer => all black (or transparent).
+            var cpuBuf = [UInt8](repeating: 0, count: w*h*4)
+            for i in 0..<(w*h) {
+                cpuBuf[i*4+0] = 0
+                cpuBuf[i*4+1] = 0
+                cpuBuf[i*4+2] = 0
+                cpuBuf[i*4+3] = 255
+            }
+
+            // Re-fill ALL remaining mesh faces
+            let triCount = newIndices.count / 3
+            var idx = 0
+            for _ in 0..<triCount {
+                let iA = newIndices[idx]
+                let iB = newIndices[idx+1]
+                let iC = newIndices[idx+2]
+                idx += 3
+
+                let A = newVertices[Int(iA)]
+                let B = newVertices[Int(iB)]
+                let C = newVertices[Int(iC)]
+
+                let col = A.color
+                let fillColor = (
+                    UInt8(255*col.x),
+                    UInt8(255*col.y),
+                    UInt8(255*col.z),
+                    UInt8(255*col.w)
+                )
+
+                let triPoly = [A.position, B.position, C.position]
+
+                // Fill in via LCA
+                FillAlgorithms.fillPolygonLCA(
+                    polygon: triPoly,
+                    pixels: &cpuBuf,
+                    width: w,
+                    height: h,
+                    fillColor: fillColor,
+                    fillRule: .evenOdd
+                )
+            }
+
+            // 7) Update GPU texture + save
+            renderer.updateFillTextureCPU(cpuBuf)
+            doc.saveFillTexture(cpuBuf, width: w, height: h)
+
+            print("Eraser: triangle/polygon removed from mesh & fill updated.")
+        }
+
+        /// Deletes the exact triangle at triBaseIndex (a multiple of 3).
+        /// Does NOT remove orphan vertices. We simply skip this triple.
+        func removeOneTriangle(
+            oldVertices: [PolygonVertex],
+            oldIndices: [UInt16],
+            triangleBaseIndex: Int
+        ) -> ([PolygonVertex], [UInt16]) {
+            var newVerts = oldVertices // do not touch
+            var newInds: [UInt16] = []
+
+            var i = 0
+            while i < oldIndices.count {
+                if i == triangleBaseIndex {
+                    // skip the 3 indices => i, i+1, i+2
+                    i += 3
+                    continue
+                }
+                newInds.append(oldIndices[i])
+                i += 1
+            }
+
+            return (newVerts, newInds)
+        }
+
+        func removePolygon(
+            oldVertices: [PolygonVertex],
+            oldIndices: [UInt16],
+            polygonIDtoRemove: Int32
+        ) -> ([PolygonVertex], [UInt16]) {
+            var newVerts = oldVertices
+            var newInds: [UInt16] = []
+
+            var i = 0
+            while i < oldIndices.count {
+                let iA = oldIndices[i]
+                let iB = oldIndices[i+1]
+                let iC = oldIndices[i+2]
+
+                let A = oldVertices[Int(iA)]
+                let B = oldVertices[Int(iB)]
+                let C = oldVertices[Int(iC)]
+
+                let matchA = A.polygonIDs.contains(polygonIDtoRemove)
+                let matchB = B.polygonIDs.contains(polygonIDtoRemove)
+                let matchC = C.polygonIDs.contains(polygonIDtoRemove)
+
+                if matchA || matchB || matchC {
+                    // => this triangle belongs to the polygon => skip it
+                    i += 3
+                    continue
+                } else {
+                    newInds.append(iA)
+                    newInds.append(iB)
+                    newInds.append(iC)
+                    i += 3
+                }
+            }
+
+            return (newVerts, newInds)
         }
 
         private func finalizePolygon(_ ectPoints: [ECTPoint], color: Color) {

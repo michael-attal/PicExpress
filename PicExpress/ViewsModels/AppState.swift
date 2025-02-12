@@ -55,8 +55,8 @@ import SwiftUI
     // The fill rule => evenOdd (pair-impair) or winding (enroulement) or both
     var selectedFillRule: FillRule = .evenOdd
 
-    /// This determines how we fill polygons on click when selectedTool == .fill & algo .lca
-    var selectedFillMode: FillMode = .triangle
+    /// This determines how we fill polygons on click when selectedTool == .fill & algo .lca or how we want to erase something (by triangle or polygone)
+    var selectedDetectionMode: DetectionMode = .triangle
 
     var nextPolygonID: Int32 = 0
 
