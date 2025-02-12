@@ -53,11 +53,13 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
 
 /// This enum describes the different shapes we can create when using the "Formes" tool.
 public enum ShapeType: String, CaseIterable, Sendable, SelectionItem {
-    case rectangle
-    case square
-    case circle
-    case ellipse
-    case triangle
+    public var id: String { rawValue }
+
+    case rectangle = "Rectangle"
+    case square = "Carré"
+    case circle = "Cercle"
+    case ellipse = "Ellipse"
+    case triangle = "Triangle"
 
     public var description: String { rawValue }
 }
