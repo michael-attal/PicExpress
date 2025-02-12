@@ -316,7 +316,15 @@ struct MetalCanvasView: NSViewRepresentable {
                 let newPoint = ECTPoint(x: Double(px), y: Double(py))
                 appState.lassoPoints.append(newPoint)
                 mr.updatePreviewPoints(appState.lassoPoints)
+            case .cut:
+                guard let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) else { return }
 
+                print("CUT: we add a cutting point at (\(px), \(py))")
+                let newPoint = ECTPoint(x: Double(px), y: Double(py))
+
+                appState.lassoPoints.append(newPoint)
+
+                mr.updatePreviewPoints(appState.lassoPoints)
             case .fill:
                 guard let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) else { return }
 
@@ -438,7 +446,6 @@ struct MetalCanvasView: NSViewRepresentable {
                         fillRule: appState.selectedFillRule
                     )
                 }
-
             default:
                 break
             }
@@ -460,7 +467,7 @@ struct MetalCanvasView: NSViewRepresentable {
                     guard let doc = appState.selectedDocument else { return }
                     guard let mr = mainRenderer else { return }
 
-                    // 1) Charger ancien mesh
+                    // 1) Load old mesh
                     let oldMesh = doc.loadMesh()
                     var oldVertices: [PolygonVertex] = []
                     var oldIndices: [UInt16] = []
@@ -491,7 +498,7 @@ struct MetalCanvasView: NSViewRepresentable {
                     // 5) Update renderer
                     mr.meshRenderer.updateMesh(vertices: mergedVertices, indices: mergedIndices)
 
-                    // 6) Fill auto => on applique un fill LCA pour voir la forme en fillTexture
+                    // 6) Fill Auto => We apply a LCA Fill to see the FillTexture shape
                     let fillC = color.toSIMD4()
                     let fillBytes = (
                         UInt8(255 * fillC.x),
@@ -514,7 +521,174 @@ struct MetalCanvasView: NSViewRepresentable {
                 }
                 appState.lassoPoints.removeAll()
                 mainRenderer?.updatePreviewPoints([])
+            case .cut:
+                // The user has just placed appstate.lassoPoints to define the polynomial window
+                guard let doc = appState.selectedDocument else { return }
+                guard let mr = mainRenderer else { return }
+                if appState.lassoPoints.count >= 3 {
+                    // 1) Convert Lassopoints (ECTpoint/Double) to [SIMD2<Float>] (Pixel coords)
+                    let clipWindow: [SIMD2<Float>] = appState.lassoPoints.map {
+                        SIMD2<Float>(Float($0.x), Float($0.y))
+                    }
 
+                    // 2) Load the old mesh from the document
+                    guard let (oldVerts, oldIndices) = doc.loadMesh() else {
+                        print("No mesh in the doc => no cutting.")
+                        appState.lassoPoints.removeAll()
+                        mr.updatePreviewPoints([])
+                        return
+                    }
+
+                    // 3) Browse each triangle of the old mesh
+                    var newVertices: [PolygonVertex] = []
+                    var newIndices: [UInt16] = []
+                    var currentIndex: UInt16 = 0
+
+                    let countTris = oldIndices.count / 3
+                    for t in 0..<countTris {
+                        let iA = oldIndices[3 * t + 0]
+                        let iB = oldIndices[3 * t + 1]
+                        let iC = oldIndices[3 * t + 2]
+
+                        let A = oldVerts[Int(iA)]
+                        let B = oldVerts[Int(iB)]
+                        let C = oldVerts[Int(iC)]
+
+                        let triPoly = [A.position, B.position, C.position]
+
+                        // 4) Triangle cutting through the "Clipwindow" window
+                        let clippedPoly: [SIMD2<Float>]
+                        switch appState.selectedClippingAlgorithm {
+                        case .cyrusBeck:
+                            clippedPoly = ClippingAlgorithms.cyrusBeckClip(
+                                subjectPolygon: triPoly,
+                                clipWindow: clipWindow
+                            )
+                        case .sutherlandHodgman:
+                            clippedPoly = ClippingAlgorithms.sutherlandHodgmanClip(
+                                subjectPolygon: triPoly,
+                                clipWindow: clipWindow
+                            )
+                        }
+
+                        // If there is no more polygon => this triangle is completely out of window
+                        guard clippedPoly.count >= 3 else {
+                            continue
+                        }
+
+                        // 5) We re-triangule the cut polygon (ear clipping)
+                        let ectPoly = ECTPolygon(vertices: clippedPoly.map {
+                            ECTPoint(x: Double($0.x), y: Double($0.y))
+                        })
+                        let triList = EarClippingTriangulation().getEarClipTriangles(polygon: ectPoly)
+
+                        // 6) For each triangle produced, 3 new polygonvertex is created
+                        // Keep the same color as the vertice A
+                        let colorA = A.color
+                        let polyIDs = A.polygonIDs // Keep the ID to find out which original poly it comes
+                        for tri in triList {
+                            // Convert ECTPoint -> SIMD2<Float>
+                            let pA = SIMD2<Float>(Float(tri.a.x), Float(tri.a.y))
+                            let pB = SIMD2<Float>(Float(tri.b.x), Float(tri.b.y))
+                            let pC = SIMD2<Float>(Float(tri.c.x), Float(tri.c.y))
+
+                            let iA2 = currentIndex
+                            let iB2 = currentIndex + 1
+                            let iC2 = currentIndex + 2
+                            currentIndex += 3
+
+                            newIndices.append(iA2)
+                            newIndices.append(iB2)
+                            newIndices.append(iC2)
+
+                            newVertices.append(
+                                PolygonVertex(position: pA,
+                                              uv: .zero,
+                                              color: colorA,
+                                              polygonIDs: polyIDs)
+                            )
+                            newVertices.append(
+                                PolygonVertex(position: pB,
+                                              uv: .zero,
+                                              color: colorA,
+                                              polygonIDs: polyIDs)
+                            )
+                            newVertices.append(
+                                PolygonVertex(position: pC,
+                                              uv: .zero,
+                                              color: colorA,
+                                              polygonIDs: polyIDs)
+                            )
+                        }
+                    }
+
+                    // 7) Save this new mesh in the document
+                    doc.saveMesh(newVertices, newIndices)
+
+                    // 8) Update the rendering (Mesh GPU)
+                    mr.meshRenderer.updateMesh(vertices: newVertices, indices: newIndices)
+
+                    // 9) Re-fulfill the entire CPU texture,
+                    // because we have a new mesh from the cutting
+                    if let fillTex = mr.fillTexture {
+                        // a) We first empty the CPU Buffer
+                        let w = mr.texWidth
+                        let h = mr.texHeight
+                        var cpuBuf = [UInt8](repeating: 0, count: w * h * 4)
+                        for i in 0..<(w * h) {
+                            let idx = i * 4
+                            cpuBuf[idx + 0] = 0 // R
+                            cpuBuf[idx + 1] = 0 // G
+                            cpuBuf[idx + 2] = 0 // B
+                            cpuBuf[idx + 3] = 255 // A
+                        }
+
+                        // b) We are it on the triangles of the new mesh => we apply LCA
+                        let triCount2 = newIndices.count / 3
+                        for t2 in 0..<triCount2 {
+                            let iA2 = newIndices[3 * t2 + 0]
+                            let iB2 = newIndices[3 * t2 + 1]
+                            let iC2 = newIndices[3 * t2 + 2]
+
+                            let A2 = newVertices[Int(iA2)]
+                            let B2 = newVertices[Int(iB2)]
+                            let C2 = newVertices[Int(iC2)]
+
+                            let triPoly2: [SIMD2<Float>] = [A2.position, B2.position, C2.position]
+
+                            // Color => We take the color of A2
+                            let col = A2.color
+                            let fillColor = (
+                                UInt8(255 * col.x),
+                                UInt8(255 * col.y),
+                                UInt8(255 * col.z),
+                                UInt8(255 * col.w)
+                            )
+
+                            // c) LCA on this triangle
+                            FillAlgorithms.fillPolygonLCA(
+                                polygon: triPoly2,
+                                pixels: &cpuBuf,
+                                width: w,
+                                height: h,
+                                fillColor: fillColor,
+                                fillRule: .evenOdd
+                            )
+                        }
+
+                        // d) Update the GPU texture
+                        mr.updateFillTextureCPU(cpuBuf)
+
+                        // e) Save in the doc
+                        doc.saveFillTexture(cpuBuf, width: w, height: h)
+                    }
+
+                    print("Découpage terminé, nouveau mesh mis à jour.")
+                }
+
+                // Whatever the result, we reset the lasso
+                appState.lassoPoints.removeAll()
+                mr.updatePreviewPoints([])
             default:
                 break
             }
