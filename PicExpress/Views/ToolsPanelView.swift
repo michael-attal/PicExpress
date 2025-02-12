@@ -17,6 +17,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
     case eraser
     case cut
     case resize
+    case movePolygon
     case addPolygonList
     case addPolygonFromClick
 
@@ -29,6 +30,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .eraser: return "Gomme"
         case .cut: return "Découpage"
         case .resize: return "Redimensionnement"
+        case .movePolygon: return "Déplacement d'objets"
         case .addPolygonList: return "Polygone par liste de points"
         case .addPolygonFromClick: return "Polygone par clic"
         }
@@ -43,6 +45,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .eraser: return "eraser"
         case .cut: return "lasso"
         case .resize: return "hand.point.up.braille"
+        case .movePolygon: return "rectangle.and.arrow.up.right.and.arrow.down.left"
         case .addPolygonList: return "hexagon.fill"
         case .addPolygonFromClick: return "hand.point.up.left"
         }

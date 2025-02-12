@@ -22,7 +22,7 @@ It was originally developed as a **Math course project** on geometric algorithms
 
 • **LCA** (Active Edge Table).
 
-• **Eraser, resizing, pre-shaping, export**... tools.
+• **Eraser, resizing, moving, pre-shaping, export**... tools.
 
 • **Modern SwiftUI/Metal Interface**:
 

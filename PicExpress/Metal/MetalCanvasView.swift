@@ -127,7 +127,13 @@ struct MetalCanvasView: NSViewRepresentable {
         private var shapePreviewPoints: [ECTPoint] = []
 
         private var isResizing = false
-        private var draggedVertexIndex: Int? = nil
+        private var draggedVertexForIndexResize: Int? = nil
+
+        private var draggedIndicesForMove: [Int] = []
+        private var originalPositions: [SIMD2<Float>] = []
+        private var startX: Float = 0
+        private var startY: Float = 0
+
         private let vertexPickThreshold: Float = 10.0
 
         init(
@@ -346,6 +352,11 @@ struct MetalCanvasView: NSViewRepresentable {
                     pickNearestVertexOrNone(x: px, y: py)
                 }
 
+            case .movePolygon:
+                if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
+                    pickVerticesForMovePolygon(x: px, y: py)
+                }
+
             case .fill:
                 if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
                     print("In fill tool, clicked at (\(px), \(py))")
@@ -381,20 +392,43 @@ struct MetalCanvasView: NSViewRepresentable {
             case .shapes:
                 guard isShapeDrawing else { return }
                 if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
-                    let curr = SIMD2<Float>(px, py)
                     if let shapeType = appState.currentShapeType {
                         let points = buildShapePoints(shapeType: shapeType,
                                                       start: shapeStartDocCoords,
-                                                      end: curr)
+                                                      end: SIMD2<Float>(px, py))
                         shapePreviewPoints = points
                         mr.updatePreviewPoints(shapePreviewPoints)
                     }
                 }
             case .resize:
-                guard isResizing, let idx = draggedVertexIndex else { return }
+                guard isResizing, let idx = draggedVertexForIndexResize else { return }
                 if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
                     // 1)Update vertex position
                     mr.lastVertices[idx].position = SIMD2<Float>(px, py)
+
+                    // 2) Update GPU mesh
+                    let updatedVerts = mr.lastVertices
+                    let updatedIndices = mr.lastIndices
+                    mr.meshRenderer.updateMesh(vertices: updatedVerts, indices: updatedIndices)
+
+                    // 3) Re-build CPU fill => “live preview”.
+                    rebuildFillCPUAndUpdateTexture(verts: updatedVerts, indices: updatedIndices)
+                }
+            case .movePolygon:
+                guard isResizing, !draggedIndicesForMove.isEmpty else { return }
+                if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
+                    // 1)Update vertex position
+                    let dx = px - startX
+                    let dy = py - startY
+
+                    for i in 0..<draggedIndicesForMove.count {
+                        let idx = draggedIndicesForMove[i]
+                        let origPos = originalPositions[i]
+                        mr.lastVertices[idx].position = SIMD2<Float>(
+                            origPos.x+dx,
+                            origPos.y+dy
+                        )
+                    }
 
                     // 2) Update GPU mesh
                     let updatedVerts = mr.lastVertices
@@ -437,15 +471,31 @@ struct MetalCanvasView: NSViewRepresentable {
                 }
 
             case .resize:
-                if isResizing, let idx = draggedVertexIndex {
+                if isResizing, let idx = draggedVertexForIndexResize {
                     isResizing = false
-                    draggedVertexIndex = nil
+                    draggedVertexForIndexResize = nil
 
                     let updatedVerts = mr.lastVertices
                     let updatedIndices = mr.lastIndices
 
                     doc.saveMesh(updatedVerts, updatedIndices)
                     doc.saveFillTexture(mr.cpuBuffer, width: mr.texWidth, height: mr.texHeight)
+
+                    print("Resize finalized => mesh + texture saved.")
+                }
+
+            case .resize:
+                if isResizing, !draggedIndicesForMove.isEmpty {
+                    isResizing = false
+
+                    let updatedVerts = mr.lastVertices
+                    let updatedIndices = mr.lastIndices
+
+                    doc.saveMesh(updatedVerts, updatedIndices)
+                    doc.saveFillTexture(mr.cpuBuffer, width: mr.texWidth, height: mr.texHeight)
+
+                    draggedIndicesForMove.removeAll()
+                    originalPositions.removeAll()
 
                     print("Resize finalized => mesh + texture saved.")
                 }
@@ -616,7 +666,7 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
-        // MARK: - Fill click
+        // MARK: - fill / erase / etc
 
         private func handleFillClick(px: Float, py: Float, renderer: MainMetalRenderer) {
             let ix = Int(px.rounded())
@@ -748,11 +798,11 @@ struct MetalCanvasView: NSViewRepresentable {
             // We compare the min
             if closestIndex >= 0, closestDist < vertexPickThreshold {
                 print("Resize mode => pick vertex index=\(closestIndex), distance=\(closestDist)")
-                draggedVertexIndex = closestIndex
+                draggedVertexForIndexResize = closestIndex
                 isResizing = true
             } else {
                 print("Resize mode => no vertex close enough => no drag")
-                draggedVertexIndex = nil
+                draggedVertexForIndexResize = nil
                 isResizing = false
             }
         }
@@ -957,6 +1007,86 @@ struct MetalCanvasView: NSViewRepresentable {
             }
 
             return (newVerts, newInds)
+        }
+
+        private func pickVerticesForMovePolygon(x: Float, y: Float) {
+            guard let mr = mainRenderer else { return }
+            guard let (allVerts, allIndices) = mr.exportCurrentMesh() else {
+                isResizing = false
+                return
+            }
+
+            let clickPos = SIMD2<Float>(x, y)
+            var foundTriBase: Int? = nil
+            var triVertices: (PolygonVertex, PolygonVertex, PolygonVertex)? = nil
+
+            var i = 0
+            while i < allIndices.count {
+                let iA = allIndices[i]
+                let iB = allIndices[i+1]
+                let iC = allIndices[i+2]
+                let A = allVerts[Int(iA)]
+                let B = allVerts[Int(iB)]
+                let C = allVerts[Int(iC)]
+
+                if mr.pointInTriangle(p: clickPos, a: A.position, b: B.position, c: C.position) {
+                    foundTriBase = i
+                    triVertices = (A, B, C)
+                    break
+                }
+                i += 3
+            }
+
+            if foundTriBase == nil {
+                print("Resize => no triangle under click => do nothing")
+                isResizing = false
+                draggedIndicesForMove.removeAll()
+                originalPositions.removeAll()
+                return
+            }
+
+            let triBase = foundTriBase!
+            let iA = allIndices[triBase]
+            let iB = allIndices[triBase+1]
+            let iC = allIndices[triBase+2]
+            let (vA, vB, vC) = triVertices!
+
+            startX = x
+            startY = y
+
+            draggedIndicesForMove.removeAll()
+            originalPositions.removeAll()
+
+            switch appState.selectedDetectionMode {
+            case .triangle:
+                draggedIndicesForMove = [Int(iA), Int(iB), Int(iC)]
+                for idx in draggedIndicesForMove {
+                    originalPositions.append(allVerts[idx].position)
+                }
+
+            case .polygon:
+                let pid = vA.polygonIDs.x
+                if pid < 0 {
+                    draggedIndicesForMove = [Int(iA), Int(iB), Int(iC)]
+                    for idx in draggedIndicesForMove {
+                        originalPositions.append(allVerts[idx].position)
+                    }
+                } else {
+                    var list: [Int] = []
+                    var listPos: [SIMD2<Float>] = []
+                    for (idx, vv) in allVerts.enumerated() {
+                        if vv.polygonIDs.contains(pid) {
+                            list.append(idx)
+                            listPos.append(vv.position)
+                        }
+                    }
+                    draggedIndicesForMove = list
+                    originalPositions = listPos
+                }
+            }
+
+            isResizing = !draggedIndicesForMove.isEmpty
+            print("pickVerticesForResizing => draggedIndices=\(draggedIndicesForMove), isResizing=\(isResizing)")
         }
 
         private func finalizePolygon(_ ectPoints: [ECTPoint], color: Color) {
