@@ -126,6 +126,10 @@ struct MetalCanvasView: NSViewRepresentable {
         /// Preview points for current shape
         private var shapePreviewPoints: [ECTPoint] = []
 
+        private var isResizing = false
+        private var draggedVertexIndex: Int? = nil
+        private let vertexPickThreshold: Float = 10.0
+
         init(
             zoom: Binding<CGFloat>,
             panOffset: Binding<CGSize>,
@@ -174,7 +178,7 @@ struct MetalCanvasView: NSViewRepresentable {
             // We pick the smallest => doc fully fits in the view
             let maxZoom = min(ratioW, ratioH)*8.0
 
-            let minZoom: CGFloat = 0.1
+            let minZoom: CGFloat = 0.8
             let clamped = max(minZoom, min(newZoom, maxZoom))
             return clamped
         }
@@ -337,6 +341,11 @@ struct MetalCanvasView: NSViewRepresentable {
                     mr.updatePreviewPoints(appState.lassoPoints)
                 }
 
+            case .resize:
+                if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
+                    pickNearestVertexOrNone(x: px, y: py)
+                }
+
             case .fill:
                 if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
                     print("In fill tool, clicked at (\(px), \(py))")
@@ -381,7 +390,20 @@ struct MetalCanvasView: NSViewRepresentable {
                         mr.updatePreviewPoints(shapePreviewPoints)
                     }
                 }
+            case .resize:
+                guard isResizing, let idx = draggedVertexIndex else { return }
+                if let (px, py) = convertClickToDocumentCoords(pt: pt, view: view, renderer: mr, document: doc) {
+                    // 1)Update vertex position
+                    mr.lastVertices[idx].position = SIMD2<Float>(px, py)
 
+                    // 2) Update GPU mesh
+                    let updatedVerts = mr.lastVertices
+                    let updatedIndices = mr.lastIndices
+                    mr.meshRenderer.updateMesh(vertices: updatedVerts, indices: updatedIndices)
+
+                    // 3) Re-build CPU fill => “live preview”.
+                    rebuildFillCPUAndUpdateTexture(verts: updatedVerts, indices: updatedIndices)
+                }
             default:
                 break
             }
@@ -412,6 +434,20 @@ struct MetalCanvasView: NSViewRepresentable {
                     }
                     // We finalize => triangulation + insertion in the mesh
                     finalizePolygon(finalPoints, color: appState.selectedColor)
+                }
+
+            case .resize:
+                if isResizing, let idx = draggedVertexIndex {
+                    isResizing = false
+                    draggedVertexIndex = nil
+
+                    let updatedVerts = mr.lastVertices
+                    let updatedIndices = mr.lastIndices
+
+                    doc.saveMesh(updatedVerts, updatedIndices)
+                    doc.saveFillTexture(mr.cpuBuffer, width: mr.texWidth, height: mr.texHeight)
+
+                    print("Resize finalized => mesh + texture saved.")
                 }
 
             default:
@@ -689,6 +725,38 @@ struct MetalCanvasView: NSViewRepresentable {
             }
         }
 
+        private func pickNearestVertexOrNone(x: Float, y: Float) {
+            guard let mr = mainRenderer else { return }
+
+            // Recover all vertices
+            let allVerts = mr.lastVertices
+            if allVerts.isEmpty { return }
+
+            var closestIndex: Int = -1
+            var closestDist = Float.greatestFiniteMagnitude
+
+            for (i, vtx) in allVerts.enumerated() {
+                let dx = vtx.position.x - x
+                let dy = vtx.position.y - y
+                let dist = sqrt(dx*dx+dy*dy)
+                if dist < closestDist {
+                    closestDist = dist
+                    closestIndex = i
+                }
+            }
+
+            // We compare the min
+            if closestIndex >= 0, closestDist < vertexPickThreshold {
+                print("Resize mode => pick vertex index=\(closestIndex), distance=\(closestDist)")
+                draggedVertexIndex = closestIndex
+                isResizing = true
+            } else {
+                print("Resize mode => no vertex close enough => no drag")
+                draggedVertexIndex = nil
+                isResizing = false
+            }
+        }
+
         private func handleEraserClick(px: Float, py: Float, renderer: MainMetalRenderer) {
             let ix = Int(px.rounded())
             let iy = Int(py.rounded())
@@ -942,6 +1010,57 @@ struct MetalCanvasView: NSViewRepresentable {
                 fillColor: fillBytes,
                 fillRule: .evenOdd
             )
+        }
+
+        // TODO: Refactor others tool to use this method to update buffers
+        private func rebuildFillCPUAndUpdateTexture(verts: [PolygonVertex], indices: [UInt16]) {
+            guard let mr = mainRenderer else { return }
+            let w = mr.texWidth
+            let h = mr.texHeight
+            var cpuBuf = [UInt8](repeating: 0, count: w*h*4)
+            for i in 0..<(w*h) {
+                let idx = i*4
+                cpuBuf[idx+0] = 0
+                cpuBuf[idx+1] = 0
+                cpuBuf[idx+2] = 0
+                cpuBuf[idx+3] = 255
+            }
+            let triCount = indices.count / 3
+            var idx = 0
+            for _ in 0..<triCount {
+                let iA = indices[idx]
+                let iB = indices[idx+1]
+                let iC = indices[idx+2]
+                idx += 3
+
+                let A = verts[Int(iA)]
+                let B = verts[Int(iB)]
+                let C = verts[Int(iC)]
+
+                let col = A.color
+                let fillColor = (
+                    UInt8(255*col.x),
+                    UInt8(255*col.y),
+                    UInt8(255*col.z),
+                    UInt8(255*col.w)
+                )
+
+                let triPoly = [A.position, B.position, C.position]
+
+                FillAlgorithms.fillPolygonLCA(
+                    polygon: triPoly,
+                    pixels: &cpuBuf,
+                    width: w,
+                    height: h,
+                    fillColor: fillColor,
+                    fillRule: .evenOdd
+                )
+            }
+            mr.updateFillTextureCPU(cpuBuf)
+
+            //  Store in the coord. You don't necessarily save to the doc,
+            // because we may want to do it in mouseUp mode. You can just assign a local "cpuBuffer" to the mr.
+            mr.cpuBuffer = cpuBuf
         }
 
         private func buildShapePoints(shapeType: ShapeType,

@@ -47,7 +47,7 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
 
     // For CPU-based fill usage
     public var fillTexture: MTLTexture?
-    private var cpuBuffer: [UInt8] = []
+    public var cpuBuffer: [UInt8] = []
 
     // Zoom/pan
     private var zoom: Float = 1.0

@@ -16,7 +16,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
     case shapes
     case eraser
     case cut
-    // case resize
+    case resize
     case addPolygonList
     case addPolygonFromClick
 
@@ -28,7 +28,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .shapes: return "Formes"
         case .eraser: return "Gomme"
         case .cut: return "Découpage"
-        // case .resize: return "Redimensionnement"
+        case .resize: return "Redimensionnement"
         case .addPolygonList: return "Polygone par liste de points"
         case .addPolygonFromClick: return "Polygone par clic"
         }
@@ -42,7 +42,7 @@ enum AvailableTool: String, CaseIterable, Equatable, Identifiable, Sendable, Sel
         case .shapes: return "square.on.circle"
         case .eraser: return "eraser"
         case .cut: return "lasso"
-        // case .resize: return "hand.point.up.braille"
+        case .resize: return "hand.point.up.braille"
         case .addPolygonList: return "hexagon.fill"
         case .addPolygonFromClick: return "hand.point.up.left"
         }
@@ -277,10 +277,10 @@ struct ToolsPanelView: View {
                 appState.currentShapeType = shape
             }
 
-        // case .resize:
-        //     // No need to ask an algo => user just wants to move vertices
-        //     // We do nothing special here
-        //     print("Mode: Redimensionnement => user can drag the lassoPoints vertices now")
+        case .resize:
+            // No need to ask an algo => user just wants to move vertices
+            // We do nothing special here
+            print("Mode: Redimensionnement => user can drag the lassoPoints vertices now")
 
         default:
             break
