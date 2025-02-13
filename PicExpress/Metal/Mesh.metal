@@ -66,15 +66,15 @@ fragment float4 fs_mesh(VertexOut in [[stage_in]]) {
     return in.color;
 }
 
-/// New fragment shader to sample from a polygon's texture
+/// Fragment shader to sample from a polygon's texture
 fragment float4 fs_mesh_textured(
     VertexOut in [[stage_in]],
     texture2d<float> fillTex [[texture(0)]]
 )
 {
     constexpr sampler s(address::clamp_to_edge, filter::nearest);
-    // On lit la couleur CPU dans fillTex, via in.uv
+    // CPU color is read from fillTex, via in.uv
     float4 texColor = fillTex.sample(s, in.uv);
     return texColor;
-    // Si on veut la multiplier par la color d'origine: `return texColor * in.color;`
+    // If we want to multiply it by the original color: "return texColor * in.color;"
 }

@@ -76,7 +76,7 @@ struct SelectionSheetView<T: SelectionItem>: View {
 
             if title == "Choisir l'algorithme de remplissage" {
                 VStack(spacing: 10) {
-                    Picker("Règle de remplissage :", selection: Binding<FillRule>(
+                    Picker("Règle de remplissage pour LCA :", selection: Binding<FillRule>(
                         get: { appState.selectedFillRule },
                         set: { appState.selectedFillRule = $0 }
                     )) {
