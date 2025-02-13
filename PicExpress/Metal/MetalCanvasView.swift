@@ -31,6 +31,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
         let mtkView = ZoomableMTKView(frame: .zero, device: device)
         mtkView.framebufferOnly = false
+        mtkView.sampleCount = 4
 
         // Create the main renderer
         let mr = MainMetalRenderer(

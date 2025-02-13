@@ -72,7 +72,7 @@ fragment float4 fs_mesh_textured(
     texture2d<float> fillTex [[texture(0)]]
 )
 {
-    constexpr sampler s(address::clamp_to_edge, filter::nearest);
+    constexpr sampler s(address::clamp_to_edge, filter::nearest); // or filter::linear
     // CPU color is read from fillTex, via in.uv
     float4 texColor = fillTex.sample(s, in.uv);
     return texColor;

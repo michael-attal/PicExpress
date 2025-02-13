@@ -36,7 +36,8 @@ final class PointsPreviewRenderer {
         desc.vertexFunction = vertexFunc
         desc.fragmentFunction = fragmentFunc
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-
+        desc.rasterSampleCount = 4
+        
         let vertexDescriptor = MTLVertexDescriptor()
 
         vertexDescriptor.attributes[0].format = .float2

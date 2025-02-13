@@ -46,7 +46,8 @@ final class MeshRenderer {
         desc.vertexFunction = vertexFunc
         desc.fragmentFunction = fragmentFunc
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-
+        desc.rasterSampleCount = 4 // Avoid pixelated shapes.
+        
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: desc)
         } catch {
