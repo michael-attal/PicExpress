@@ -45,13 +45,15 @@ public final class PicExpressDocument {
         width: Int,
         height: Int,
         timestamp: Date = Date(),
-        meshData: Data? = nil
+        meshData: Data? = nil,
+        fillTexture: Data? = nil
     ) {
         self.name = name
         self.width = width
         self.height = height
         self.timestamp = timestamp
         self.meshData = meshData
+        self.fillTexturePNG = fillTexture
     }
 
     // MARK: - Example: saving/loading the mesh from JSON
@@ -130,4 +132,18 @@ public final class PicExpressDocument {
 private struct SavedMesh: Codable {
     let vertices: [PolygonVertex]
     let indices: [UInt16]
+}
+
+extension PicExpressDocument {
+    /// Creates a duplicate of the current document with a new unique ID and a modified name.
+    func duplicate() -> PicExpressDocument {
+        return PicExpressDocument(
+            name: "\(self.name) (copie)",
+            width: self.width,
+            height: self.height,
+            timestamp: Date(),
+            meshData: self.meshData,
+            fillTexture: self.fillTexturePNG
+        )
+    }
 }

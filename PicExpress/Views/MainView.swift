@@ -95,7 +95,7 @@ struct MainView: View {
                 }
             )
             .navigationTitle("PicExpress")
-            .navigationSplitViewColumnWidth(min: 10, ideal: 120, max: 200)
+            .navigationSplitViewColumnWidth(min: 100, ideal: 150, max: 250)
 
         } detail: {
             if let doc = selectedDocument {
@@ -110,11 +110,13 @@ struct MainView: View {
 
     // MARK: - Actions
 
-    private func addDocument(docName: String, width: Int, height: Int) {
+    private func addDocument(docName: String, width: Int, height: Int, meshData: Data? = nil, fillTexture: Data? = nil) {
         withAnimation {
             let newDoc = PicExpressDocument(name: docName,
                                             width: width,
-                                            height: height)
+                                            height: height,
+                                            meshData: meshData,
+                                            fillTexture: fillTexture)
             modelContext.insert(newDoc)
             appState.selectedTool = tools.first
             selectedDocument = newDoc

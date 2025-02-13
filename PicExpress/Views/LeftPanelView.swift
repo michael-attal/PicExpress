@@ -17,7 +17,7 @@ struct LeftPanelView: View {
     
     /// Called when user wants to create a new doc
     /// We pass (docName, width, height)
-    let onAddDocument: (String, Int, Int) -> Void
+    let onAddDocument: (String, Int, Int, Data?, Data?) -> Void
     let onDeleteDocument: (PicExpressDocument) -> Void
     
     /// Tools
@@ -52,6 +52,14 @@ struct LeftPanelView: View {
                             }
                             .buttonStyle(.plain)
                             .padding(.trailing, 8)
+                            .contextMenu {
+                                Button(action: {
+                                    let duplicatedDoc = doc.duplicate()
+                                    onAddDocument(duplicatedDoc.name, duplicatedDoc.width, duplicatedDoc.height, duplicatedDoc.meshData, duplicatedDoc.fillTexturePNG)
+                                }) {
+                                    Label("Dupliquer", systemImage: "doc.on.doc")
+                                }
+                            }
                         }
                         .tag(doc)
                     }
@@ -75,7 +83,7 @@ struct LeftPanelView: View {
             .sheet(isPresented: $showNewDocSheet) {
                 // The sheet for new doc creation
                 NewDocumentSheet { docName, w, h in
-                    onAddDocument(docName, w, h)
+                    onAddDocument(docName, w, h, nil, nil)
                 }
             }
             
