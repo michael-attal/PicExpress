@@ -65,7 +65,7 @@ struct MetalCanvasView: NSViewRepresentable {
                 let ratioH = viewH / docH
                 let bestFitZoom = min(ratioW, ratioH)
 
-                self.zoom = bestFitZoom
+                self.zoom = 1.0 // bestFitZoom
                 self.panOffset = .zero
 
                 mr.setZoomAndPan(zoom: self.zoom, panOffset: self.panOffset)
@@ -1296,14 +1296,14 @@ struct MetalCanvasView: NSViewRepresentable {
                 let rx = abs(ex - sx)*0.5
                 let ry = abs(ey - sy)*0.5
                 let r = min(rx, ry)
-                return approximateEllipse(cx: cx, cy: cy, rx: r, ry: r, segments: 32)
+                return approximateEllipse(cx: cx, cy: cy, rx: r, ry: r, segments: 64)
 
             case .ellipse:
                 let cx = (sx+ex)*0.5
                 let cy = (sy+ey)*0.5
                 let rx = abs(ex - sx)*0.5
                 let ry = abs(ey - sy)*0.5
-                return approximateEllipse(cx: cx, cy: cy, rx: rx, ry: ry, segments: 32)
+                return approximateEllipse(cx: cx, cy: cy, rx: rx, ry: ry, segments: 64)
 
             case .triangle:
                 let xmin = min(sx, ex)
