@@ -130,7 +130,9 @@ public final class MainMetalRenderer: NSObject, MTKViewDelegate {
             let clippedPoly: [SIMD2<Float>]
             switch clippingAlgorithm {
             case .cyrusBeck:
-                clippedPoly = ClippingAlgorithms.cyrusBeckClip(subjectPolygon: poly, clipWindow: clipWindow)
+                // TODO: clippedPoly = ClippingAlgorithms.cyrusBeckClip(...)
+                // Fallback
+                clippedPoly = ClippingAlgorithms.sutherlandHodgmanClip(subjectPolygon: poly, clipWindow: clipWindow)
             case .sutherlandHodgman:
                 clippedPoly = ClippingAlgorithms.sutherlandHodgmanClip(subjectPolygon: poly, clipWindow: clipWindow)
             case .none:

@@ -121,7 +121,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
         private var isShapeDrawing = false
 
-        /// Starting cords for .shapes tool
+        /// Starting coords for .shapes tool
         private var shapeStartDocCoords = SIMD2<Float>(0, 0)
 
         /// Preview points for current shape
@@ -534,7 +534,7 @@ struct MetalCanvasView: NSViewRepresentable {
                 mainRenderer?.updatePreviewPoints([])
 
             case .cut:
-                // The user has just placed appstate.lassoPoints to define the polynomial window
+                // The user has just placed appstate.lassoPoints to define the polygonal clip window
                 guard let mr = mainRenderer else { return }
                 guard let doc = appState.selectedDocument else { return }
 
@@ -559,33 +559,56 @@ struct MetalCanvasView: NSViewRepresentable {
 
                     let countTris = oldIndices.count / 3
                     for t in 0..<countTris {
+                        var clippedPoly: [SIMD2<Float>] = []
+
                         let iA = oldIndices[3*t+0]
                         let iB = oldIndices[3*t+1]
                         let iC = oldIndices[3*t+2]
                         let A = oldVerts[Int(iA)]
                         let B = oldVerts[Int(iB)]
                         let C = oldVerts[Int(iC)]
+
+                        // For each triangle produced, 3 new PolygonVertex is created
+                        // Keep the same color as the vertice A
+                        let colorA = A.color
+                        let polyIDs = A.polygonIDs // Keep the ID to find out which original poly it comes
+
                         let triPoly = [A.position, B.position, C.position]
 
-                        let clippedPoly: [SIMD2<Float>]
                         switch appState.selectedClippingAlgorithm {
                         case .cyrusBeck:
-                            clippedPoly = ClippingAlgorithms.cyrusBeckClip(subjectPolygon: triPoly, clipWindow: clipWindow)
+                            // Clipping the 3 edges
+                            let edges = [
+                                (start: triPoly[0], end: triPoly[1]),
+                                (start: triPoly[1], end: triPoly[2]),
+                                (start: triPoly[2], end: triPoly[0])
+                            ]
+                            var clippedEdges: [(SIMD2<Float>, SIMD2<Float>)] = []
+                            for seg in edges {
+                                var segment = seg
+                                // cyrusBeck => true if we keep a portion
+                                if ClippingAlgorithms.cyrusBeckClip(segment: &segment, clipWindow: clipWindow) {
+                                    clippedEdges.append((segment.start, segment.end))
+                                }
+                            }
+
+                            // Reconstruct the polygon from the clipped segments
+                            clippedPoly = reconstructPolygon(from: clippedEdges)
+
                         case .sutherlandHodgman:
-                            clippedPoly = ClippingAlgorithms.sutherlandHodgmanClip(subjectPolygon: triPoly, clipWindow: clipWindow)
+                            clippedPoly = ClippingAlgorithms.sutherlandHodgmanClip(
+                                subjectPolygon: triPoly,
+                                clipWindow: clipWindow
+                            )
                         }
 
+                        print("clippedPoly: \(clippedPoly)")
                         if clippedPoly.count < 3 { continue }
 
                         let ectPoly = ECTPolygon(vertices: clippedPoly.map {
                             ECTPoint(x: Double($0.x), y: Double($0.y))
                         })
                         let triList = EarClippingTriangulation().getEarClipTriangles(polygon: ectPoly)
-
-                        // 6) For each triangle produced, 3 new PolygonVertex is created
-                        // Keep the same color as the vertice A
-                        let colorA = A.color
-                        let polyIDs = A.polygonIDs // Keep the ID to find out which original poly it comes
 
                         for tri in triList {
                             // Convert ECTPoint -> SIMD2<Float>
@@ -625,7 +648,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
                     // Refill entire CPU texture
                     if let fillTex = mr.fillTexture {
-                        // a) We first empty the CPU Buffer
+                        // We first empty the CPU Buffer
                         let w = mr.texWidth
                         let h = mr.texHeight
                         var cpuBuf = [UInt8](repeating: 0, count: w*h*4)
@@ -636,17 +659,17 @@ struct MetalCanvasView: NSViewRepresentable {
                             cpuBuf[idx+2] = 0
                             cpuBuf[idx+3] = 255
                         }
-                        // b) We are it on the triangles of the new mesh => we apply LCA
+                        // We are it on the triangles of the new mesh => we apply LCA
                         let triCount2 = newIndices.count / 3
                         for t2 in 0..<triCount2 {
                             let iA2 = newIndices[3*t2+0]
                             let iB2 = newIndices[3*t2+1]
                             let iC2 = newIndices[3*t2+2]
+
                             let A2 = newVertices[Int(iA2)]
                             let B2 = newVertices[Int(iB2)]
                             let C2 = newVertices[Int(iC2)]
-                            let triPoly2: [SIMD2<Float>] = [A2.position, B2.position, C2.position]
-                            // Color => We take the color of A2
+
                             let col = A2.color
                             let fillColor = (
                                 UInt8(255*col.x),
@@ -654,7 +677,9 @@ struct MetalCanvasView: NSViewRepresentable {
                                 UInt8(255*col.z),
                                 UInt8(255*col.w)
                             )
-                            // c) LCA on this triangle
+                            // LCA on this triangle
+                            let triPoly2: [SIMD2<Float>] = [A2.position, B2.position, C2.position]
+
                             FillAlgorithms.fillPolygonLCA(
                                 polygon: triPoly2,
                                 pixels: &cpuBuf,
@@ -755,18 +780,9 @@ struct MetalCanvasView: NSViewRepresentable {
                             let A = allVerts[Int(iA)]
                             let B = allVerts[Int(iB)]
                             let C = allVerts[Int(iC)]
-                            let matchA = (A.polygonIDs.x == pid
-                                || A.polygonIDs.y == pid
-                                || A.polygonIDs.z == pid
-                                || A.polygonIDs.w == pid)
-                            let matchB = (B.polygonIDs.x == pid
-                                || B.polygonIDs.y == pid
-                                || B.polygonIDs.z == pid
-                                || B.polygonIDs.w == pid)
-                            let matchC = (C.polygonIDs.x == pid
-                                || C.polygonIDs.y == pid
-                                || C.polygonIDs.z == pid
-                                || C.polygonIDs.w == pid)
+                            let matchA = A.polygonIDs.contains(pid)
+                            let matchB = B.polygonIDs.contains(pid)
+                            let matchC = C.polygonIDs.contains(pid)
                             if matchA || matchB || matchC {
                                 allPolygonsTris.append([A.position, B.position, C.position])
                             }
@@ -838,9 +854,7 @@ struct MetalCanvasView: NSViewRepresentable {
                     let vIDs = [vtx.polygonIDs.x, vtx.polygonIDs.y,
                                 vtx.polygonIDs.z, vtx.polygonIDs.w]
                     let hasCommonID = vIDs.contains(where: { $0 >= 0 && selectedIDs.contains($0) })
-                    if !hasCommonID {
-                        continue
-                    }
+                    if !hasCommonID { continue }
 
                     // Check B: position almost identical to selected vertex?
                     let dx = vtx.position.x - selectedPos.x
@@ -883,7 +897,7 @@ struct MetalCanvasView: NSViewRepresentable {
 
             // 2) Find which triangle is clicked
             let clickPos = SIMD2<Float>(px, py)
-            var foundTriIndex: Int? = nil // index dans allIndices
+            var foundTriIndex: Int? = nil
             var foundTriVertices: (PolygonVertex, PolygonVertex, PolygonVertex)? = nil
 
             var i = 0
@@ -918,7 +932,6 @@ struct MetalCanvasView: NSViewRepresentable {
             let oldVertices = allVerts
             let oldIndices = allIndices
 
-            // Nouveau tableau "filtré"
             var newVertices: [PolygonVertex] = []
             var newIndices: [UInt16] = []
 
@@ -1207,6 +1220,7 @@ struct MetalCanvasView: NSViewRepresentable {
         }
 
         // TODO: Refactor others tool to use this method to update buffers
+        /// Rebuild the entire CPU buffer => Fill each triangle => then update GPU.
         private func rebuildFillCPUAndUpdateTexture(verts: [PolygonVertex], indices: [UInt16]) {
             guard let mr = mainRenderer else { return }
             let w = mr.texWidth
@@ -1334,6 +1348,57 @@ struct MetalCanvasView: NSViewRepresentable {
                 pts.append(ECTPoint(x: x, y: y))
             }
             return pts
+        }
+
+        // MARK: - Reconstruct polygon from clipped edges
+
+        /// Reconstruct a polygon from a set of clipped edges (start->end).
+        /// We attempt to build a sequence of connected edges.
+        private func reconstructPolygon(from edges: [(SIMD2<Float>, SIMD2<Float>)]) -> [SIMD2<Float>] {
+            // Petit cas : si edges est vide
+            if edges.isEmpty {
+                return []
+            }
+            // If there is only one segment => 2 points
+            if edges.count == 1 {
+                let seg = edges[0]
+                return [seg.0, seg.1]
+            }
+
+            // Adjacence : map start -> list of ends
+            var adjacency: [SIMD2<Float>: [SIMD2<Float>]] = [:]
+            for (start, end) in edges {
+                adjacency[start, default: []].append(end)
+            }
+
+            // Starting from the first segment
+            let first = edges[0]
+            let firstStart = first.0
+            var current = firstStart
+
+            var result: [SIMD2<Float>] = [current]
+
+            // We try to chain
+            while true {
+                guard let nextList = adjacency[current], !nextList.isEmpty else {
+                    break
+                }
+                // We take the 1st end
+                let next = nextList[0]
+                result.append(next)
+
+                // We remove this edge from the adjacency
+                adjacency[current] = Array(nextList.dropFirst())
+
+                current = next
+
+                // If we return to start => close the loop
+                if current == firstStart {
+                    break
+                }
+            }
+
+            return result
         }
     }
 
