@@ -47,7 +47,7 @@ final class MeshRenderer {
         desc.fragmentFunction = fragmentFunc
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
         desc.rasterSampleCount = 4 // Avoid pixelated shapes.
-        
+
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: desc)
         } catch {
@@ -87,15 +87,21 @@ final class MeshRenderer {
         else {
             return
         }
-        encoder.setTriangleFillMode(mainRenderer?.appState?.shouldFillMeshWithBackground ?? true ? .fill : .lines)
+
+        let useFillTexture = mainRenderer?.appState?.shouldFillMeshWithBackground ?? true
+
+        encoder.setTriangleFillMode(useFillTexture ? .fill : .lines)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBuffer(vb, offset: 0, index: 0)
         if let ub = uniformBuffer {
             encoder.setVertexBuffer(ub, offset: 0, index: 1)
         }
 
+        var textureFlag = useFillTexture
+        encoder.setFragmentBytes(&textureFlag, length: MemoryLayout<Bool>.size, index: 0)
+
         if let mainRenderer = mainRenderer,
-           let tex = mainRenderer.fillTexture
+           let tex = mainRenderer.fillTexture, let appState = mainRenderer.appState
         {
             encoder.setFragmentTexture(tex, index: 0)
         }

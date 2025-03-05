@@ -69,12 +69,17 @@ fragment float4 fs_mesh(VertexOut in [[stage_in]]) {
 /// Fragment shader to sample from a polygon's texture
 fragment float4 fs_mesh_textured(
     VertexOut in [[stage_in]],
-    texture2d<float> fillTex [[texture(0)]]
+    texture2d<float> fillTex [[texture(0)]],
+    constant bool& useFillTex [[buffer(0)]]
 )
 {
-    constexpr sampler s(address::clamp_to_edge, filter::nearest); // or filter::linear
-    // CPU color is read from fillTex, via in.uv
-    float4 texColor = fillTex.sample(s, in.uv);
-    return texColor;
-    // If we want to multiply it by the original color: "return texColor * in.color;"
+    constexpr sampler s(address::clamp_to_edge, filter::nearest);  // or filter::linear
+    if (useFillTex) {
+        // CPU color is read from fillTex, via in.uv
+        // This allow scanline and germes algos to run on it
+        float4 texColor = fillTex.sample(s, in.uv);
+        return texColor * in.color;
+    } else {
+        return in.color;
+    }
 }
