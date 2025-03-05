@@ -101,7 +101,7 @@ final class MeshRenderer {
         encoder.setFragmentBytes(&textureFlag, length: MemoryLayout<Bool>.size, index: 0)
 
         if let mainRenderer = mainRenderer,
-           let tex = mainRenderer.fillTexture, let appState = mainRenderer.appState
+           let tex = mainRenderer.fillTexture
         {
             encoder.setFragmentTexture(tex, index: 0)
         }
