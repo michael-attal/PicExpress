@@ -577,12 +577,30 @@ struct MetalCanvasView: NSViewRepresentable {
 
                         switch appState.selectedClippingAlgorithm {
                         case .cyrusBeck:
-                            // Clipping the 3 edges
-                            let edges = [
-                                (start: triPoly[0], end: triPoly[1]),
-                                (start: triPoly[1], end: triPoly[2]),
-                                (start: triPoly[2], end: triPoly[0])
-                            ]
+                            let prevPolygonId = t > 0 ? oldVerts[Int(oldIndices[3*(t - 1)])].polygonIDs.x : A.polygonIDs.x
+                            let currentPolygonId = A.polygonIDs.x
+                            let nextPolygonId = t+1 < countTris ? oldVerts[Int(oldIndices[3*(t+1)])].polygonIDs.x : A.polygonIDs.x
+
+                            var edges: [(start: SIMD2<Float>, end: SIMD2<Float>)] = []
+                            if prevPolygonId != currentPolygonId || currentPolygonId != nextPolygonId {
+                                // Because vertices are saved in clockwise
+                                edges = [
+                                    (start: triPoly[0], end: triPoly[1])
+                                ]
+                            } else {
+                                edges = [
+                                    (start: triPoly[0], end: triPoly[1]),
+                                    (start: triPoly[1], end: triPoly[2])
+                                ]
+                            }
+
+                            // // Clipping the 3 edges
+                            // let edges = [
+                            //     (start: triPoly[0], end: triPoly[1]),
+                            //     (start: triPoly[1], end: triPoly[2]),
+                            //     (start: triPoly[2], end: triPoly[0])
+                            // ]
+
                             var clippedEdges: [(SIMD2<Float>, SIMD2<Float>)] = []
                             for seg in edges {
                                 var segment = seg
